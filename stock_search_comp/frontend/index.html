@@ -37,8 +37,8 @@
     #results {
       border: 1px solid #d0d0d0;
       border-radius: 0.4rem;
-      /* 입력칸과 함께 보이면서 행을 압축해 더 많은 종목 표시 */
-      max-height: min(42vh, 260px);
+      /* 안내 문구를 아래로 밀고 목록을 크게 */
+      max-height: min(55vh, 360px);
       overflow-y: auto;
       -webkit-overflow-scrolling: touch;
       background: #fff;
@@ -59,8 +59,9 @@
     }
     @media (max-width: 768px) {
       #results-title { margin: 0.35rem 0 0.2rem; }
-      #results { max-height: min(40vh, 240px); }
+      #results { max-height: min(52vh, 340px); }
       .item { padding: 0.22rem 0.5rem; font-size: 0.8rem; line-height: 1.15; }
+      #picked { margin-top: 0.55rem; padding-bottom: 0.35rem; }
     }
     .item:last-child { border-bottom: 0; }
     .item:active, .item.selected { background: #ffe8e8; }
@@ -71,7 +72,7 @@
       min-height: 1.6rem;
     }
     #picked {
-      margin-top: 0.3rem;
+      margin-top: 0.65rem;
       font-size: 0.8rem;
       color: #0a7a3e;
       min-height: 1rem;
@@ -166,8 +167,8 @@
     }
 
     function resize() {
-      // 입력칸+결과가 한 화면에 들어오도록 프레임 높이 과도하게 키우지 않음
-      const h = Math.min(Math.max(document.body.scrollHeight + 8, 320), 420);
+      // 결과 목록을 키운 만큼 프레임도 여유 있게
+      const h = Math.min(Math.max(document.body.scrollHeight + 8, 360), 520);
       setFrameHeight(h);
     }
 
@@ -255,7 +256,7 @@
 
       if (!selected || !startsWithHit(selected, query)) {
         selected = null;
-        pickedEl.textContent = "아래에서 종목을 터치해 선택하세요.";
+        pickedEl.textContent = "아래에서 종목을 선택해 터치하세요.";
         emit({ query: query, ticker: null, label: null, fromList: false });
       }
 
