@@ -1,0 +1,19 @@
+{
+  "terminalAllowlist": [
+    "git",
+    "gh",
+    "python",
+    "pip",
+    "streamlit",
+    ".\\venv\\Scripts\\python.exe",
+    ".\\venv\\Scripts\\Activate.ps1",
+    "venv\\Scripts\\python.exe",
+    "winget"
+  ],
+  "autoRun": {
+    "allow_instructions": [
+      "이 프로젝트에서 python, git, gh, pip, streamlit, venv 관련 로컬 명령은 승인 없이 진행해도 됩니다.",
+      "주식 분석기 개발·테스트·배포를 위한 읽기/쓰기 터미널 작업은 허용해도 됩니다."
+    ]
+  }
+}
