@@ -1,0 +1,6 @@
+[client]
+# 상단 개발자 툴바를 최소화해 하단/상단 Streamlit UI를 줄입니다.
+toolbarMode = "viewer"
+
+[browser]
+gatherUsageStats = false

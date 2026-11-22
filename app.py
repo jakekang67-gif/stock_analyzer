@@ -11,6 +11,13 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+from stocks import (
+    format_stock_label,
+    resolve_many,
+    resolve_to_ticker,
+    search_stocks,
+)
+
 
 # ---------------------------------------------------------------------------
 # 페이지 설정
@@ -22,11 +29,11 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# PC·모바일 공통 반응형 스타일
+# PC·모바일 공통 반응형 스타일 + 하단 Streamlit UI 숨김
 st.markdown(
     """
     <style>
-    /* 기본 여백 축소 — 모바일에서 공간 확보 */
+    /* 기본 여백 축소 */
     .block-container {
         padding-top: 1.2rem;
         padding-bottom: 2rem;
@@ -41,35 +48,58 @@ st.markdown(
         margin-bottom: 0.35rem !important;
     }
 
-    /* 지표 카드가 좁은 화면에서 읽기 쉽게 */
-    [data-testid="stMetricValue"] {
-        font-size: 1.15rem !important;
-    }
-    [data-testid="stMetricLabel"] {
-        font-size: 0.85rem !important;
+    [data-testid="stMetricValue"] { font-size: 1.15rem !important; }
+    [data-testid="stMetricLabel"] { font-size: 0.85rem !important; }
+    [data-testid="stDataFrame"] { overflow-x: auto; }
+
+    /* Streamlit 기본 메뉴·푸터·장식 숨김 */
+    #MainMenu { visibility: hidden; }
+    footer { visibility: hidden; }
+    header { visibility: hidden; }
+    [data-testid="stToolbar"] { display: none !important; }
+    [data-testid="stDecoration"] { display: none !important; }
+    [data-testid="stStatusWidget"] { display: none !important; }
+    .stDeployButton { display: none !important; }
+    .stAppDeployButton { display: none !important; }
+
+    /* Streamlit Cloud 하단 배지 / Manage app 계열 */
+    div[class*="viewerBadge"],
+    a[class*="viewerBadge"],
+    a[href*="streamlit.io"],
+    a[href*="share.streamlit.io"] {
+        display: none !important;
+        visibility: hidden !important;
+        pointer-events: none !important;
     }
 
-    /* 표가 화면을 넘치지 않도록 */
-    [data-testid="stDataFrame"] {
-        overflow-x: auto;
-    }
-
-    /* 모바일 (768px 이하) */
+    /* 모바일: 설정(사이드바) 가로 꽉 채우기 */
     @media (max-width: 768px) {
         .block-container {
             padding-top: 0.8rem;
             padding-left: 0.6rem;
             padding-right: 0.6rem;
         }
-        h1 {
-            font-size: 1.25rem !important;
+        h1 { font-size: 1.25rem !important; }
+        [data-testid="stMetricValue"] { font-size: 1rem !important; }
+
+        section[data-testid="stSidebar"] {
+            width: 100vw !important;
+            min-width: 100vw !important;
+            max-width: 100vw !important;
+            transform: translateX(0) !important;
         }
-        [data-testid="stMetricValue"] {
-            font-size: 1rem !important;
+        section[data-testid="stSidebar"] > div {
+            width: 100% !important;
+            max-width: 100vw !important;
         }
-        /* 사이드바 안내 문구 */
         section[data-testid="stSidebar"] .block-container {
             padding-top: 1rem;
+            padding-left: 1rem;
+            padding-right: 1rem;
+        }
+        /* 사이드바 열렸을 때 본문이 비치지 않도록 */
+        [data-testid="stSidebarContent"] {
+            width: 100% !important;
         }
     }
     </style>
@@ -106,7 +136,7 @@ def format_money(value: float, currency: str) -> str:
     return f"{value:,.2f} {label}"
 
 
-@st.cache_data(ttl=300)  # 5분 캐시 — 과도한 API 호출 방지
+@st.cache_data(ttl=300)
 def fetch_history(ticker: str, period: str) -> pd.DataFrame:
     """종목의 기간별 시세 데이터를 가져옵니다."""
     stock = yf.Ticker(ticker)
@@ -131,11 +161,7 @@ def add_moving_averages(df: pd.DataFrame, short: int = 20, long: int = 60) -> pd
 
 
 def detect_uptrend(df: pd.DataFrame, short: int = 20, long: int = 60) -> dict:
-    """
-    이동평균 기반 상승 추세 판별.
-    - 정배열: 단기 MA > 장기 MA 이고 종가 > 단기 MA
-    - 골든크로스: 최근 5거래일 내 단기 MA가 장기 MA를 상향 돌파
-    """
+    """이동평균 기반 상승 추세 판별."""
     ma_s = f"MA{short}"
     ma_l = f"MA{long}"
 
@@ -149,12 +175,10 @@ def detect_uptrend(df: pd.DataFrame, short: int = 20, long: int = 60) -> dict:
 
     latest = df.iloc[-1]
     prev = df.iloc[-2]
-
     price_above_ma = latest["Close"] > latest[ma_s]
-    ma_aligned = latest[ma_s] > latest[ma_l]  # 정배열
-    ma_rising = latest[ma_s] > prev[ma_s]  # 단기 MA 우상향
+    ma_aligned = latest[ma_s] > latest[ma_l]
+    ma_rising = latest[ma_s] > prev[ma_s]
 
-    # 최근 5일 내 골든크로스 여부
     golden_cross = False
     lookback = min(5, len(df) - 1)
     for i in range(-lookback, 0):
@@ -169,7 +193,10 @@ def detect_uptrend(df: pd.DataFrame, short: int = 20, long: int = 60) -> dict:
     if golden_cross and is_uptrend:
         label, detail = "🚀 강한 상승 추세", "정배열 + 최근 골든크로스 발생"
     elif is_uptrend and ma_rising:
-        label, detail = "📈 상승 추세", "단기 이동평균 > 장기 이동평균, 종가가 단기 이동평균 위, 이동평균 우상향"
+        label, detail = (
+            "📈 상승 추세",
+            "단기 이동평균 > 장기 이동평균, 종가가 단기 이동평균 위, 이동평균 우상향",
+        )
     elif is_uptrend:
         label, detail = "📈 상승 추세 (약함)", "정배열이지만 단기 이동평균 상승세는 둔화"
     elif ma_aligned:
@@ -199,7 +226,7 @@ def chart_layout_opts(height: int) -> dict:
         ),
         margin=dict(l=48, r=16, t=56, b=36),
         hovermode="x unified",
-        dragmode="pan",  # 모바일에서 손가락으로 좌우 이동하기 쉬움
+        dragmode="pan",
         font=dict(family="Malgun Gothic, Apple SD Gothic Neo, sans-serif"),
     )
 
@@ -207,7 +234,7 @@ def chart_layout_opts(height: int) -> dict:
 def build_price_chart(
     df: pd.DataFrame, ticker: str, short: int, long: int, height: int = 520
 ) -> go.Figure:
-    """종가 + 이동평균 + 거래량 차트를 그립니다."""
+    """종가 + 이동평균 + 거래량 차트."""
     fig = make_subplots(
         rows=2,
         cols=1,
@@ -216,16 +243,9 @@ def build_price_chart(
         row_heights=[0.7, 0.3],
         subplot_titles=(f"{ticker} 주가와 이동평균", "거래량"),
     )
-
     fig.add_trace(
-        go.Scatter(
-            x=df["Date"],
-            y=df["Close"],
-            name="종가",
-            line=dict(color="#1f77b4", width=2),
-        ),
-        row=1,
-        col=1,
+        go.Scatter(x=df["Date"], y=df["Close"], name="종가", line=dict(color="#1f77b4", width=2)),
+        row=1, col=1,
     )
     fig.add_trace(
         go.Scatter(
@@ -234,8 +254,7 @@ def build_price_chart(
             name=f"단기 이동평균({short}일)",
             line=dict(color="#ff7f0e", width=1.5, dash="dot"),
         ),
-        row=1,
-        col=1,
+        row=1, col=1,
     )
     fig.add_trace(
         go.Scatter(
@@ -244,20 +263,13 @@ def build_price_chart(
             name=f"장기 이동평균({long}일)",
             line=dict(color="#2ca02c", width=1.5, dash="dash"),
         ),
-        row=1,
-        col=1,
+        row=1, col=1,
     )
-
-    colors = [
-        "#ef5350" if c < o else "#26a69a"
-        for c, o in zip(df["Close"], df["Open"])
-    ]
+    colors = ["#ef5350" if c < o else "#26a69a" for c, o in zip(df["Close"], df["Open"])]
     fig.add_trace(
         go.Bar(x=df["Date"], y=df["Volume"], name="거래량", marker_color=colors),
-        row=2,
-        col=1,
+        row=2, col=1,
     )
-
     fig.update_layout(**chart_layout_opts(height))
     fig.update_yaxes(title_text="가격", row=1, col=1)
     fig.update_yaxes(title_text="거래량", row=2, col=1)
@@ -272,9 +284,7 @@ def build_compare_chart(data: dict[str, pd.DataFrame], height: int = 380) -> go.
         if df.empty:
             continue
         normalized = (df["Close"] / df["Close"].iloc[0]) * 100
-        fig.add_trace(
-            go.Scatter(x=df["Date"], y=normalized, name=ticker, mode="lines")
-        )
+        fig.add_trace(go.Scatter(x=df["Date"], y=normalized, name=ticker, mode="lines"))
     fig.update_layout(
         **chart_layout_opts(height),
         title="종목 비교 (시작점 = 100)",
@@ -321,11 +331,41 @@ with st.sidebar:
     st.header("⚙️ 설정")
     st.caption("📱 모바일: 왼쪽 위 ≫ 메뉴에서 설정을 열 수 있습니다.")
 
-    ticker_input = st.text_input(
-        "종목 코드",
-        value="AAPL",
-        help="미국: AAPL, TSLA / 한국: 005930.KS(삼성전자), 000660.KS(SK하이닉스)",
-    ).strip().upper()
+    st.subheader("종목 검색")
+    stock_query = st.text_input(
+        "이름 또는 코드",
+        value=st.session_state.get("stock_query", "삼성"),
+        placeholder="예: 삼 / 애플 / AAPL / 005930",
+        help="한 글자만 입력해도 자동으로 후보가 나타납니다.",
+        key="stock_query_input",
+    ).strip()
+
+    selected_ticker = None
+    selected_label = None
+    matches = search_stocks(stock_query) if stock_query else []
+
+    if stock_query:
+        if matches:
+            labels = [format_stock_label(m) for m in matches]
+            # 이전에 고른 값이 있으면 유지
+            default_idx = 0
+            prev_label = st.session_state.get("selected_stock_label")
+            if prev_label in labels:
+                default_idx = labels.index(prev_label)
+            selected_label = st.selectbox(
+                "검색 결과",
+                options=labels,
+                index=default_idx,
+                help="원하는 종목을 선택하세요.",
+            )
+            selected_ticker = matches[labels.index(selected_label)]["ticker"]
+            st.caption(f"선택됨: **{selected_label}**")
+        else:
+            # 목록에 없으면 입력을 티커로 시도
+            selected_ticker = resolve_to_ticker(stock_query)
+            st.info(f"목록에 없어 코드 `{selected_ticker}` 로 조회합니다.")
+    else:
+        st.caption("한 글자 이상 입력하면 종목이 검색됩니다.")
 
     period = st.selectbox(
         "조회 기간",
@@ -351,7 +391,6 @@ with st.sidebar:
     if ma_short >= ma_long:
         st.warning("단기 이동평균은 장기 이동평균보다 작아야 합니다.")
 
-    # 화면 크기별 차트 높이 (사용자가 선택 — 자동 감지가 어려워 옵션 제공)
     chart_size = st.radio(
         "화면 / 차트 크기",
         options=["자동(권장)", "모바일", "PC"],
@@ -363,8 +402,8 @@ with st.sidebar:
     st.divider()
     compare_raw = st.text_input(
         "비교 종목 (쉼표로 구분)",
-        value="MSFT, GOOGL",
-        help="예: MSFT, GOOGL 또는 000660.KS",
+        value="애플, 테슬라",
+        help="이름 또는 코드 가능. 예: 마이크로소프트, TSLA, 000660.KS",
     )
     invest_amount = st.number_input(
         "가상 투자 금액",
@@ -377,13 +416,12 @@ with st.sidebar:
     analyze = st.button("분석하기", type="primary", use_container_width=True)
 
 
-# 차트 높이 결정
+# 차트 높이
 if chart_size == "모바일":
     price_chart_h, compare_chart_h = 420, 300
 elif chart_size == "PC":
     price_chart_h, compare_chart_h = 560, 420
 else:
-    # 자동: 중간값 — CSS/반응형과 함께 무난하게 동작
     price_chart_h, compare_chart_h = 480, 340
 
 
@@ -391,24 +429,27 @@ else:
 # 메인 영역
 # ---------------------------------------------------------------------------
 if not analyze and "last_ticker" not in st.session_state:
-    st.info("왼쪽 **설정**에서 종목을 고른 뒤 **분석하기**를 눌러 주세요. (모바일은 왼쪽 위 ≫ 메뉴)")
+    st.info("왼쪽 **설정**에서 종목을 검색·선택한 뒤 **분석하기**를 눌러 주세요. (모바일은 왼쪽 위 ≫ 메뉴)")
     st.markdown(
         """
         ### 사용 예시
-        | 시장 | 종목 | 코드 |
-        |------|------|------|
-        | 미국 | 애플 | `AAPL` |
-        | 미국 | 테슬라 | `TSLA` |
-        | 한국 | 삼성전자 | `005930.KS` |
-        | 한국 | SK하이닉스 | `000660.KS` |
-        | 한국 | 카카오 | `035720.KS` |
+        | 시장 | 검색어 예 | 코드 |
+        |------|-----------|------|
+        | 한국 | `삼` / `삼성전자` | `005930.KS` |
+        | 한국 | `하이닉스` | `000660.KS` |
+        | 미국 | `애` / `애플` / `AAPL` | `AAPL` |
+        | 미국 | `테슬라` / `TSLA` | `TSLA` |
         """
     )
     st.stop()
 
-# 버튼 누르면 설정 저장, 이후에도 결과 유지
 if analyze:
-    st.session_state["last_ticker"] = ticker_input
+    if not selected_ticker:
+        st.error("종목을 검색하고 선택한 뒤 다시 **분석하기**를 눌러 주세요.")
+        st.stop()
+    st.session_state["last_ticker"] = selected_ticker
+    st.session_state["last_stock_label"] = selected_label or selected_ticker
+    st.session_state["selected_stock_label"] = selected_label
     st.session_state["last_period"] = period
     st.session_state["last_ma_short"] = ma_short
     st.session_state["last_ma_long"] = ma_long
@@ -416,13 +457,14 @@ if analyze:
     st.session_state["last_amount"] = invest_amount
     st.session_state["last_chart_size"] = chart_size
 
-ticker = st.session_state.get("last_ticker", ticker_input)
+ticker = st.session_state.get("last_ticker", selected_ticker)
 period = st.session_state.get("last_period", period)
 ma_short = int(st.session_state.get("last_ma_short", ma_short))
 ma_long = int(st.session_state.get("last_ma_long", ma_long))
 compare_raw = st.session_state.get("last_compare", compare_raw)
 invest_amount = float(st.session_state.get("last_amount", invest_amount))
 chart_size = st.session_state.get("last_chart_size", chart_size)
+display_label = st.session_state.get("last_stock_label", ticker)
 
 if chart_size == "모바일":
     price_chart_h, compare_chart_h = 420, 300
@@ -431,11 +473,15 @@ elif chart_size == "PC":
 else:
     price_chart_h, compare_chart_h = 480, 340
 
+if not ticker:
+    st.error("종목이 선택되지 않았습니다.")
+    st.stop()
+
 if ma_short >= ma_long:
     st.error("단기 이동평균은 장기 이동평균보다 작아야 합니다. 설정에서 수정해 주세요.")
     st.stop()
 
-with st.spinner(f"{ticker} 데이터를 불러오는 중..."):
+with st.spinner(f"{display_label} 데이터를 불러오는 중..."):
     try:
         df = fetch_history(ticker, period)
         info = fetch_info(ticker)
@@ -444,14 +490,13 @@ with st.spinner(f"{ticker} 데이터를 불러오는 중..."):
         st.stop()
 
 if df.empty:
-    st.error(f"`{ticker}` 데이터를 찾을 수 없습니다. 종목 코드를 확인해 주세요.")
+    st.error(f"`{ticker}` 데이터를 찾을 수 없습니다. 종목 이름/코드를 확인해 주세요.")
     st.stop()
 
 df = add_moving_averages(df, ma_short, ma_long)
 trend = detect_uptrend(df, ma_short, ma_long)
 
-# --- 1) 현재가 / 등락 ---
-name = info.get("shortName") or info.get("longName") or ticker
+name = info.get("shortName") or info.get("longName") or display_label
 currency = info.get("currency", "USD")
 current = info.get("currentPrice") or info.get("regularMarketPrice") or float(df["Close"].iloc[-1])
 prev_close = info.get("previousClose") or (
@@ -462,19 +507,13 @@ change_pct = (change / prev_close * 100) if prev_close else 0.0
 
 st.subheader(f"{name} (`{ticker}`)")
 
-# 2열 × 2행 — 모바일에서도 잘 쌓임
 row1 = st.columns(2)
 row2 = st.columns(2)
-row1[0].metric(
-    "현재가",
-    format_money(current, currency),
-    f"{change:+.2f} ({change_pct:+.2f}%)",
-)
+row1[0].metric("현재가", format_money(current, currency), f"{change:+.2f} ({change_pct:+.2f}%)")
 row1[1].metric("기간 시작가", format_money(float(df["Close"].iloc[0]), currency))
 row2[0].metric("기간 최고가", format_money(float(df["High"].max()), currency))
 row2[1].metric("기간 최저가", format_money(float(df["Low"].min()), currency))
 
-# --- 2) 추세 판정 ---
 if trend["is_uptrend"]:
     st.success(f"**{trend['label']}** — {trend['detail']}")
 else:
@@ -483,14 +522,12 @@ else:
 if trend["golden_cross"]:
     st.info("✨ 최근 5거래일 내 **골든크로스**(단기 이동평균이 장기 이동평균을 상향 돌파)가 감지되었습니다.")
 
-# --- 3) 차트 ---
 st.plotly_chart(
     build_price_chart(df, ticker, ma_short, ma_long, height=price_chart_h),
     use_container_width=True,
     config=PLOTLY_CONFIG,
 )
 
-# --- 4) 수익률 시뮬레이션 ---
 st.subheader("💰 가상 투자 수익률")
 result = calc_profit(df, invest_amount)
 if result:
@@ -508,10 +545,9 @@ if result:
         f"평가금 {format_money(result['final_value'], currency)}"
     )
 
-# --- 5) 종목 비교 ---
 st.subheader("📊 종목 비교")
-compare_tickers = [t.strip().upper() for t in compare_raw.split(",") if t.strip()]
-all_tickers = [ticker] + [t for t in compare_tickers if t != ticker]
+compare_tickers = [t for t in resolve_many(compare_raw) if t != ticker]
+all_tickers = [ticker] + compare_tickers
 
 compare_data: dict[str, pd.DataFrame] = {ticker: df}
 failed = []
@@ -531,7 +567,6 @@ if len(compare_data) > 1:
         use_container_width=True,
         config=PLOTLY_CONFIG,
     )
-
     rows = []
     for t, cdf in compare_data.items():
         cdf_ma = add_moving_averages(cdf, ma_short, ma_long)
