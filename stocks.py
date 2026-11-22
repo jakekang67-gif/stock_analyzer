@@ -66,8 +66,8 @@ def format_stock_label(item: dict) -> str:
 
 def search_stocks(query: str, limit: int = 20) -> list[dict]:
     """
-    한 글자 이상이면 이름·코드·별칭에서 부분 일치 검색.
-    결과가 여러 개면 이름 시작 일치 → 티커 시작 일치 → 그 외 순으로 정렬.
+    한 글자 이상이면 이름·코드·별칭이 검색어로 '시작하는' 종목만 반환.
+    예: '삼' → 삼성전자, 삼성SDI, 삼성물산 ...
     """
     q = _norm(query)
     if not q:
@@ -78,15 +78,18 @@ def search_stocks(query: str, limit: int = 20) -> list[dict]:
         name_n = _norm(item["name"])
         ticker_n = _norm(item["ticker"])
         alias_n = [_norm(a) for a in item.get("aliases", [])]
-        haystacks = [name_n, ticker_n, *alias_n]
 
-        if not any(q in h for h in haystacks):
+        # 시작 일치만 허용 (부분 포함 검색 제외)
+        name_hit = name_n.startswith(q)
+        ticker_hit = ticker_n.startswith(q)
+        alias_hit = any(a.startswith(q) for a in alias_n)
+        if not (name_hit or ticker_hit or alias_hit):
             continue
 
-        # 점수가 낮을수록 상위
-        if name_n.startswith(q) or ticker_n.startswith(q):
+        # 점수가 낮을수록 상위: 이름 > 티커 > 별칭
+        if name_hit:
             score = 0
-        elif any(a.startswith(q) for a in alias_n):
+        elif ticker_hit:
             score = 1
         else:
             score = 2

@@ -102,6 +102,10 @@ st.markdown(
         [data-testid="stSidebarContent"] {
             width: 100% !important;
         }
+        /* 키보드에 가리지 않도록 아래에 스크롤 여유 */
+        section[data-testid="stSidebar"] [data-testid="stSidebarContent"] {
+            padding-bottom: 50vh !important;
+        }
     }
     </style>
     """,
@@ -111,7 +115,7 @@ st.markdown(
 st.title("📈 상승 추세를 찾는 주식 데이터 분석기")
 st.caption("야후 파이낸스 데이터 · 이동평균(MA) 기반 기술적 분석 · PC·모바일 지원")
 
-# Streamlit Cloud 하단 'Manage app' 등 오버레이 숨김 시도
+# Streamlit Cloud 하단 UI 숨김 + 자동완성 끄기 + 키보드 가림 방지 스크롤
 # (앱 iframe 밖 요소는 브라우저 보안상 숨기지 못할 수 있음)
 components.html(
     """
@@ -136,17 +140,71 @@ components.html(
           });
         } catch (e) {}
       }
+
+      function disableAutofill(doc) {
+        if (!doc) return;
+        try {
+          doc.querySelectorAll("input, textarea, select").forEach(function (el) {
+            el.setAttribute("autocomplete", "off");
+            el.setAttribute("autocorrect", "off");
+            el.setAttribute("autocapitalize", "off");
+            el.setAttribute("spellcheck", "false");
+            el.setAttribute("data-lpignore", "true");
+            el.setAttribute("data-form-type", "other");
+            el.setAttribute("data-1p-ignore", "true");
+            // 삼성/크롬이 비밀번호·결제·주소로 오인하지 않도록
+            if (!el.getAttribute("name") || /pass|email|address|card|pay/i.test(el.getAttribute("name") || "")) {
+              el.setAttribute("name", "stock-search-" + Math.random().toString(36).slice(2, 8));
+            }
+            if ((el.getAttribute("type") || "") === "password") {
+              el.setAttribute("type", "text");
+            }
+            if (!el.dataset.scrollBound) {
+              el.dataset.scrollBound = "1";
+              el.addEventListener("focus", function () {
+                setTimeout(function () {
+                  try {
+                    el.scrollIntoView({ block: "center", behavior: "smooth", inline: "nearest" });
+                  } catch (e) {}
+                }, 350);
+              });
+            }
+          });
+        } catch (e) {}
+      }
+
+      function scrollSearchResult(doc) {
+        if (!doc) return;
+        try {
+          var labels = doc.querySelectorAll("label, p, div, span");
+          for (var i = 0; i < labels.length; i++) {
+            var t = ((labels[i].innerText || labels[i].textContent || "") + "").trim();
+            if (t.indexOf("검색 결과") === 0 || t === "검색 결과") {
+              setTimeout(function () {
+                try {
+                  labels[i].scrollIntoView({ block: "center", behavior: "smooth" });
+                } catch (e) {}
+              }, 200);
+              break;
+            }
+          }
+        } catch (e) {}
+      }
+
       function run() {
         hideExtras(document);
+        disableAutofill(document);
         try { hideExtras(window.parent && window.parent.document); } catch (e) {}
+        try { disableAutofill(window.parent && window.parent.document); } catch (e) {}
       }
       run();
+      scrollSearchResult(document);
       var n = 0;
       var iv = setInterval(function () {
         run();
         n += 1;
-        if (n > 20) clearInterval(iv);
-      }, 500);
+        if (n > 30) clearInterval(iv);
+      }, 400);
     })();
     </script>
     """,
@@ -375,40 +433,53 @@ with st.sidebar:
     st.caption("📱 모바일: 왼쪽 위 ≫ 메뉴에서 설정을 열 수 있습니다.")
 
     st.subheader("종목 검색")
-    stock_query = st.text_input(
-        "이름 또는 코드",
-        value=st.session_state.get("stock_query", "삼성"),
-        placeholder="예: 삼 / 애플 / AAPL / 005930",
-        help="한 글자만 입력해도 자동으로 후보가 나타납니다.",
-        key="stock_query_input",
+    # 초기값은 비움 (키로 상태 관리)
+    if "stock_query_input" not in st.session_state:
+        st.session_state["stock_query_input"] = ""
+
+    stock_query = (
+        st.text_input(
+            "이름 또는 코드",
+            placeholder="예 : 삼성전자 또는 005930",
+            help="한 글자만 입력해도 그 글자로 시작하는 종목이 검색됩니다.",
+            key="stock_query_input",
+            type="search",
+            autocomplete="off",
+        )
+        or ""
     ).strip()
 
     selected_ticker = None
     selected_label = None
     matches = search_stocks(stock_query) if stock_query else []
 
-    if stock_query:
-        if matches:
-            labels = [format_stock_label(m) for m in matches]
-            # 이전에 고른 값이 있으면 유지
-            default_idx = 0
-            prev_label = st.session_state.get("selected_stock_label")
-            if prev_label in labels:
-                default_idx = labels.index(prev_label)
-            selected_label = st.selectbox(
-                "검색 결과",
-                options=labels,
-                index=default_idx,
-                help="원하는 종목을 선택하세요.",
-            )
-            selected_ticker = matches[labels.index(selected_label)]["ticker"]
+    # 검색 결과는 기본 공백. 입력 시에만 후보 표시 (위젯 키는 하나로 유지)
+    blank = ""
+    if stock_query and matches:
+        result_options = [blank] + [format_stock_label(m) for m in matches]
+    else:
+        result_options = [blank]
+
+    selected_label = st.selectbox(
+        "검색 결과",
+        options=result_options,
+        index=0,
+        help="원하는 종목을 선택하세요.",
+        key="search_result_select",
+    )
+
+    if stock_query and matches:
+        if selected_label:
+            real_labels = result_options[1:]
+            selected_ticker = matches[real_labels.index(selected_label)]["ticker"]
             st.caption(f"선택됨: **{selected_label}**")
         else:
-            # 목록에 없으면 입력을 티커로 시도
-            selected_ticker = resolve_to_ticker(stock_query)
-            st.info(f"목록에 없어 코드 `{selected_ticker}` 로 조회합니다.")
+            st.caption("목록에서 종목을 선택해 주세요.")
+    elif stock_query and not matches:
+        selected_ticker = resolve_to_ticker(stock_query)
+        st.info(f"시작 일치 종목이 없어 코드 `{selected_ticker}` 로 조회합니다.")
     else:
-        st.caption("한 글자 이상 입력하면 종목이 검색됩니다.")
+        st.caption("한 글자 이상 입력하면 시작하는 종목이 나타납니다.")
 
     period = st.selectbox(
         "조회 기간",
@@ -447,6 +518,8 @@ with st.sidebar:
         "비교 종목 (쉼표로 구분)",
         value="애플, 테슬라",
         help="이름 또는 코드 가능. 예: 마이크로소프트, TSLA, 000660.KS",
+        type="search",
+        autocomplete="off",
     )
     invest_amount = st.number_input(
         "가상 투자 금액",
