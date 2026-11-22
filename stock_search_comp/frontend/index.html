@@ -18,8 +18,14 @@
       margin: 0 0 0.35rem 0;
       color: inherit;
     }
+    .input-row {
+      display: flex;
+      gap: 0.4rem;
+      align-items: stretch;
+    }
     #q {
-      width: 100%;
+      flex: 1;
+      min-width: 0;
       padding: 0.7rem 0.75rem;
       font-size: 16px;
       border: 1px solid #c9c9c9;
@@ -29,6 +35,34 @@
       color: #111;
     }
     #q:focus { border-color: #ff4b4b; box-shadow: 0 0 0 1px #ff4b4b; }
+    #mic {
+      flex: 0 0 auto;
+      width: 2.75rem;
+      border: 1px solid #c9c9c9;
+      border-radius: 0.4rem;
+      background: #fff;
+      color: #333;
+      font-size: 1.15rem;
+      cursor: pointer;
+      line-height: 1;
+    }
+    #mic:active { background: #f3f3f3; }
+    #mic.listening {
+      border-color: #ff4b4b;
+      background: #ffe8e8;
+      color: #c62828;
+      animation: pulse 1s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.65; }
+    }
+    #voice-status {
+      margin: 0.25rem 0 0;
+      font-size: 0.75rem;
+      color: #666;
+      min-height: 1rem;
+    }
     #results-title {
       font-size: 0.9rem;
       font-weight: 600;
@@ -48,19 +82,19 @@
       display: block;
       width: 100%;
       text-align: left;
-      padding: 0.28rem 0.55rem;
-      line-height: 1.2;
+      padding: 0.42rem 0.6rem;
+      line-height: 1.35;
       border: 0;
       border-bottom: 1px solid #eee;
       background: #fff;
       color: #111;
-      font-size: 0.82rem;
+      font-size: 0.84rem;
       cursor: pointer;
     }
     @media (max-width: 768px) {
       #results-title { margin: 0.35rem 0 0.2rem; }
       #results { max-height: min(52vh, 340px); }
-      .item { padding: 0.22rem 0.5rem; font-size: 0.8rem; line-height: 1.15; }
+      .item { padding: 0.4rem 0.55rem; font-size: 0.82rem; line-height: 1.35; }
       #picked { margin-top: 0.55rem; padding-bottom: 0.35rem; }
     }
     .item:last-child { border-bottom: 0; }
@@ -81,18 +115,22 @@
 </head>
 <body>
   <label for="q">이름 또는 코드</label>
-  <input
-    id="q"
-    type="text"
-    inputmode="search"
-    autocomplete="off"
-    autocorrect="off"
-    autocapitalize="off"
-    spellcheck="false"
-    data-form-type="other"
-    name="stock-query-field"
-    placeholder="예 : 삼성전자 또는 005930"
-  />
+  <div class="input-row">
+    <input
+      id="q"
+      type="text"
+      inputmode="search"
+      autocomplete="off"
+      autocorrect="off"
+      autocapitalize="off"
+      spellcheck="false"
+      data-form-type="other"
+      name="stock-query-field"
+      placeholder="예 : 삼성전자 또는 005930"
+    />
+    <button id="mic" type="button" title="음성으로 입력" aria-label="음성으로 입력">🎤</button>
+  </div>
+  <div id="voice-status"></div>
   <div id="results-title">검색 결과</div>
   <div id="results" aria-live="polite"></div>
   <div id="picked"></div>
@@ -292,8 +330,113 @@
       setTimeout(scrollUp, 280);
     });
 
+    /* ---------- 음성 입력 (Web Speech API) ---------- */
+    const micBtn = document.getElementById("mic");
+    const voiceStatus = document.getElementById("voice-status");
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognition = null;
+    let listening = false;
+
+    function setVoiceStatus(msg) {
+      voiceStatus.textContent = msg || "";
+      resize();
+    }
+
+    function stopListening() {
+      listening = false;
+      micBtn.classList.remove("listening");
+      micBtn.textContent = "🎤";
+      try {
+        if (recognition) recognition.stop();
+      } catch (e) {}
+    }
+
+    function startListening() {
+      if (!SpeechRec) {
+        setVoiceStatus("이 브라우저는 음성 인식을 지원하지 않습니다. 텍스트로 입력해 주세요.");
+        return;
+      }
+      if (listening) {
+        stopListening();
+        setVoiceStatus("");
+        return;
+      }
+
+      recognition = new SpeechRec();
+      recognition.lang = "ko-KR";
+      recognition.interimResults = true;
+      recognition.continuous = false;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = function () {
+        listening = true;
+        micBtn.classList.add("listening");
+        micBtn.textContent = "⏹";
+        setVoiceStatus("듣는 중… 종목 이름을 말해 주세요.");
+      };
+
+      recognition.onerror = function (ev) {
+        stopListening();
+        const err = (ev && ev.error) || "";
+        if (err === "not-allowed" || err === "service-not-allowed") {
+          setVoiceStatus("마이크 권한이 필요합니다. 브라우저 설정에서 허용해 주세요.");
+        } else if (err === "no-speech") {
+          setVoiceStatus("음성이 감지되지 않았습니다. 다시 눌러 주세요.");
+        } else if (err === "aborted") {
+          setVoiceStatus("");
+        } else {
+          setVoiceStatus("음성 인식에 실패했습니다. 다시 시도해 주세요.");
+        }
+      };
+
+      recognition.onend = function () {
+        stopListening();
+        if (voiceStatus.textContent.indexOf("듣는 중") === 0) {
+          setVoiceStatus("");
+        }
+      };
+
+      recognition.onresult = function (ev) {
+        let finalText = "";
+        let interim = "";
+        for (let i = ev.resultIndex; i < ev.results.length; i++) {
+          const t = ev.results[i][0].transcript || "";
+          if (ev.results[i].isFinal) finalText += t;
+          else interim += t;
+        }
+        const text = (finalText || interim || "").trim();
+        if (!text) return;
+
+        // 공백·조사 정도만 가볍게 정리
+        const cleaned = text.replace(/\s+/g, "").replace(/(으)?로$|(을|를)$/g, "");
+        qInput.value = cleaned || text;
+        renderResults();
+        scrollUp();
+
+        if (finalText) {
+          setVoiceStatus("인식됨: " + qInput.value);
+          stopListening();
+        } else {
+          setVoiceStatus("듣는 중… " + text);
+        }
+      };
+
+      try {
+        recognition.start();
+      } catch (e) {
+        stopListening();
+        setVoiceStatus("음성 인식을 시작할 수 없습니다.");
+      }
+    }
+
+    micBtn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      startListening();
+    });
+
     setReady();
-    setFrameHeight(380);
+    setFrameHeight(400);
   </script>
 </body>
 </html>
