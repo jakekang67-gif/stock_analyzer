@@ -13,11 +13,11 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from stocks import (
-    format_stock_label,
+    STOCK_CATALOG,
     resolve_many,
     resolve_to_ticker,
-    search_stocks,
 )
+from stock_search_comp import stock_search_widget
 
 
 # ---------------------------------------------------------------------------
@@ -443,82 +443,32 @@ with st.sidebar:
     st.caption("📱 모바일: 왼쪽 위 ≫ 메뉴에서 설정을 열 수 있습니다.")
 
     st.subheader("종목 검색")
-    # 초기값은 비움 (키로 상태 관리)
-    if "stock_query_input" not in st.session_state:
-        st.session_state["stock_query_input"] = ""
-
-    # live=True: 글자 입력 즉시 반영 → 「Press Enter to apply」 없음
-    stock_query = (
-        st.text_input(
-            "이름 또는 코드",
-            placeholder="예 : 삼성전자 또는 005930",
-            help="한 글자만 입력해도 그 글자로 시작하는 종목이 검색됩니다.",
-            key="stock_query_input",
-            autocomplete="off",
-            live=True,
-        )
-        or ""
-    ).strip()
+    # 한글 IME에서도 즉시 필터되도록 브라우저 쪽 검색 위젯 사용
+    # (Choose an option / Enter 안내 없음, 결과가 리스트로 바로 표시)
+    search_value = stock_search_widget(
+        STOCK_CATALOG,
+        default_query=st.session_state.get("last_query", ""),
+        default_ticker=st.session_state.get("last_ticker"),
+        key="stock_search_widget",
+    )
 
     selected_ticker = None
     selected_label = None
-    matches = search_stocks(stock_query) if stock_query else []
+    stock_query = ""
 
-    # 검색 결과: 입력 전에는 비움, 입력 후 시작 일치 종목만 표시
-    blank = " "
-    if stock_query and matches:
-        result_options = [blank] + [format_stock_label(m) for m in matches]
-    else:
-        result_options = [blank]
-
-    selected_label = st.selectbox(
-        "검색 결과",
-        options=result_options,
-        index=0,
-        help="원하는 종목을 선택하세요.",
-        key="search_result_select",
-        format_func=lambda x: "" if (x or "").strip() == "" else x,
-    )
-
-    if stock_query and matches:
-        # 키보드에 가리지 않도록 검색 결과 쪽으로 스크롤
-        components.html(
-            """
-            <script>
-            (function () {
-              function go() {
-                try {
-                  var doc = window.parent.document;
-                  var nodes = doc.querySelectorAll("label, p, div, span");
-                  for (var i = 0; i < nodes.length; i++) {
-                    var t = ((nodes[i].innerText || "") + "").trim();
-                    if (t.indexOf("검색 결과") === 0) {
-                      nodes[i].scrollIntoView({ block: "start", behavior: "smooth" });
-                      var side = doc.querySelector('[data-testid="stSidebar"]');
-                      if (side) side.scrollTop = Math.max(0, (nodes[i].offsetTop || 0) - 24);
-                      break;
-                    }
-                  }
-                } catch (e) {}
-              }
-              setTimeout(go, 150);
-              setTimeout(go, 450);
-            })();
-            </script>
-            """,
-            height=0,
-        )
-        if selected_label and selected_label.strip():
-            real_labels = [x for x in result_options if x.strip()]
-            selected_ticker = matches[real_labels.index(selected_label)]["ticker"]
-            st.caption(f"선택됨: **{selected_label}**")
-        else:
-            st.caption("목록에서 종목을 선택해 주세요.")
-    elif stock_query and not matches:
-        selected_ticker = resolve_to_ticker(stock_query)
-        st.info(f"시작 일치 종목이 없어 코드 `{selected_ticker}` 로 조회합니다.")
-    else:
-        st.caption("한 글자 이상 입력하면 시작하는 종목이 나타납니다.")
+    if isinstance(search_value, dict):
+        stock_query = (search_value.get("query") or "").strip()
+        selected_ticker = search_value.get("ticker")
+        selected_label = search_value.get("label")
+        # 목록에 없는 코드만 들어온 경우 정규화
+        if stock_query and not selected_ticker:
+            selected_ticker = resolve_to_ticker(stock_query)
+        if selected_ticker and not selected_label:
+            selected_label = selected_ticker
+    elif st.session_state.get("last_ticker"):
+        # 위젯이 아직 값을 안 보낸 경우 이전 선택 유지
+        selected_ticker = st.session_state.get("last_ticker")
+        selected_label = st.session_state.get("last_stock_label", selected_ticker)
 
     period = st.selectbox(
         "조회 기간",
@@ -599,12 +549,22 @@ if not analyze and "last_ticker" not in st.session_state:
     st.stop()
 
 if analyze:
+    # 목록에서 고르지 않았고 fallback 코드만 있는 경우
+    if (
+        not selected_ticker
+        and isinstance(search_value, dict)
+        and search_value.get("fallback")
+    ):
+        selected_ticker = search_value.get("fallback")
+        selected_label = selected_ticker
+
     if not selected_ticker:
-        st.error("종목을 검색하고 선택한 뒤 다시 **분석하기**를 눌러 주세요.")
+        st.error("종목을 검색한 뒤 결과 목록에서 종목을 선택해 주세요.")
         st.stop()
     st.session_state["last_ticker"] = selected_ticker
     st.session_state["last_stock_label"] = selected_label or selected_ticker
     st.session_state["selected_stock_label"] = selected_label
+    st.session_state["last_query"] = stock_query
     st.session_state["last_period"] = period
     st.session_state["last_ma_short"] = ma_short
     st.session_state["last_ma_long"] = ma_long

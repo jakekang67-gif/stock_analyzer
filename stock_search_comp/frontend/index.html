@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 0 2px 8px;
+      font-family: "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+      background: transparent;
+    }
+    label {
+      display: block;
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin: 0 0 0.35rem 0;
+      color: inherit;
+    }
+    #q {
+      width: 100%;
+      padding: 0.7rem 0.75rem;
+      font-size: 16px;
+      border: 1px solid #c9c9c9;
+      border-radius: 0.4rem;
+      outline: none;
+      background: #fff;
+      color: #111;
+    }
+    #q:focus { border-color: #ff4b4b; box-shadow: 0 0 0 1px #ff4b4b; }
+    .hint {
+      margin: 0.4rem 0 0.5rem;
+      font-size: 0.8rem;
+      opacity: 0.75;
+    }
+    #results-title {
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin: 0.75rem 0 0.35rem;
+    }
+    #results {
+      border: 1px solid #d0d0d0;
+      border-radius: 0.4rem;
+      max-height: 240px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      background: #fff;
+      min-height: 2.6rem;
+    }
+    .item {
+      display: block;
+      width: 100%;
+      text-align: left;
+      padding: 0.75rem 0.75rem;
+      border: 0;
+      border-bottom: 1px solid #eee;
+      background: #fff;
+      color: #111;
+      font-size: 0.95rem;
+      cursor: pointer;
+    }
+    .item:last-child { border-bottom: 0; }
+    .item:active, .item.selected { background: #ffe8e8; }
+    .empty {
+      padding: 0.75rem;
+      font-size: 0.85rem;
+      opacity: 0.7;
+      min-height: 2.4rem;
+    }
+    #picked {
+      margin-top: 0.45rem;
+      font-size: 0.85rem;
+      color: #0a7a3e;
+      min-height: 1.2rem;
+    }
+  </style>
+</head>
+<body>
+  <label for="q">이름 또는 코드</label>
+  <input
+    id="q"
+    type="text"
+    inputmode="search"
+    autocomplete="off"
+    autocorrect="off"
+    autocapitalize="off"
+    spellcheck="false"
+    data-form-type="other"
+    name="stock-query-field"
+    placeholder="예 : 삼성전자 또는 005930"
+  />
+  <div class="hint">한 글자만 입력해도 시작하는 종목이 바로 나타납니다.</div>
+  <div id="results-title">검색 결과</div>
+  <div id="results" aria-live="polite"></div>
+  <div id="picked"></div>
+
+  <script>
+    /* Streamlit 커스텀 컴포넌트 통신 (postMessage) */
+    function sendMessage(type, data) {
+      const msg = Object.assign({ isStreamlitMessage: true, type: type }, data || {});
+      window.parent.postMessage(msg, "*");
+    }
+    function setReady() {
+      sendMessage("streamlit:componentReady", { apiVersion: 1 });
+    }
+    function setFrameHeight(height) {
+      sendMessage("streamlit:setFrameHeight", { height: height });
+    }
+    function setComponentValue(value) {
+      sendMessage("streamlit:setComponentValue", { value: value });
+    }
+
+    const qInput = document.getElementById("q");
+    const resultsEl = document.getElementById("results");
+    const pickedEl = document.getElementById("picked");
+
+    let catalog = [];
+    let selected = null;
+    let lastSent = "";
+
+    function norm(s) {
+      return (s || "").toString().trim().toLowerCase().replace(/\s+/g, "");
+    }
+
+    function startsWithHit(item, query) {
+      const nq = norm(query);
+      if (!nq) return false;
+      if (norm(item.name).startsWith(nq)) return true;
+      if (norm(item.ticker).startsWith(nq)) return true;
+      return (item.aliases || []).some(function (a) {
+        return norm(a).startsWith(nq);
+      });
+    }
+
+    function popularRank(ticker) {
+      const order = {
+        "005930.KS": 0,
+        "000660.KS": 1,
+        AAPL: 2,
+        TSLA: 3,
+        NVDA: 4,
+        MSFT: 5,
+        GOOGL: 6,
+        "035720.KS": 7,
+        "035420.KS": 8,
+      };
+      return Object.prototype.hasOwnProperty.call(order, ticker) ? order[ticker] : 100;
+    }
+
+    function filter(query) {
+      const nq = norm(query);
+      if (!nq) return [];
+      return catalog
+        .filter(function (item) {
+          return startsWithHit(item, nq);
+        })
+        .sort(function (a, b) {
+          const ra = popularRank(a.ticker);
+          const rb = popularRank(b.ticker);
+          if (ra !== rb) return ra - rb;
+          return a.name.localeCompare(b.name, "ko");
+        })
+        .slice(0, 20);
+    }
+
+    function resize() {
+      const h = Math.max(document.body.scrollHeight + 12, 380);
+      setFrameHeight(h);
+    }
+
+    function scrollUp() {
+      try {
+        resultsEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        const side =
+          window.parent && window.parent.document
+            ? window.parent.document.querySelector('[data-testid="stSidebar"]')
+            : null;
+        if (side) {
+          // 검색 결과가 키보드 위에 오도록 사이드바를 위로
+          side.scrollTop = Math.min(side.scrollTop, 40);
+          setTimeout(function () {
+            const title = document.getElementById("results-title");
+            if (title) title.scrollIntoView({ block: "start", behavior: "smooth" });
+          }, 50);
+        }
+      } catch (e) {}
+      resize();
+    }
+
+    function emit(payload) {
+      const key = JSON.stringify(payload);
+      if (key === lastSent) return;
+      lastSent = key;
+      setComponentValue(payload);
+    }
+
+    function renderResults() {
+      const query = qInput.value;
+      const hits = filter(query);
+      resultsEl.innerHTML = "";
+
+      if (!norm(query)) {
+        resultsEl.innerHTML = '<div class="empty"></div>';
+        pickedEl.textContent = "";
+        selected = null;
+        resize();
+        return;
+      }
+
+      if (!hits.length) {
+        resultsEl.innerHTML =
+          '<div class="empty">시작 일치 종목이 없습니다.</div>';
+        pickedEl.textContent = "";
+        const fallback = norm(query).match(/^[0-9]{6}$/)
+          ? query.trim() + ".KS"
+          : query.trim().toUpperCase();
+        emit({ query: query, ticker: null, label: null, fallback: fallback, fromList: false });
+        scrollUp();
+        return;
+      }
+
+      hits.forEach(function (item) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className =
+          "item" + (selected && selected.ticker === item.ticker ? " selected" : "");
+        btn.textContent = item.name + " (" + item.ticker + ")";
+        btn.addEventListener("click", function () {
+          selected = item;
+          pickedEl.textContent = "선택됨: " + item.name + " (" + item.ticker + ")";
+          emit({
+            query: query,
+            ticker: item.ticker,
+            label: item.name + " (" + item.ticker + ")",
+            fromList: true,
+          });
+          renderResults();
+        });
+        resultsEl.appendChild(btn);
+      });
+
+      if (!selected || !startsWithHit(selected, query)) {
+        selected = null;
+        pickedEl.textContent = "아래에서 종목을 터치해 선택하세요.";
+        emit({ query: query, ticker: null, label: null, fromList: false });
+      }
+
+      scrollUp();
+    }
+
+    function onStreamlitRender(event) {
+      if (!event.data || event.data.type !== "streamlit:render") return;
+      const args = event.data.args || {};
+      catalog = args.catalog || [];
+      if (typeof args.default_query === "string" && !qInput.dataset.filled) {
+        qInput.value = args.default_query;
+        qInput.dataset.filled = "1";
+      }
+      if (args.default_ticker && !selected) {
+        const found = catalog.find(function (c) {
+          return c.ticker === args.default_ticker;
+        });
+        if (found) {
+          selected = found;
+          pickedEl.textContent =
+            "선택됨: " + found.name + " (" + found.ticker + ")";
+        }
+      }
+      renderResults();
+      resize();
+    }
+
+    window.addEventListener("message", onStreamlitRender);
+    qInput.addEventListener("compositionend", renderResults);
+    qInput.addEventListener("input", renderResults);
+    qInput.addEventListener("focus", function () {
+      setTimeout(scrollUp, 280);
+    });
+
+    setReady();
+    setFrameHeight(380);
+  </script>
+</body>
+</html>
