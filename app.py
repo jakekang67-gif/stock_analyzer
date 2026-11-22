@@ -2,6 +2,9 @@
 Streamlit 주식 데이터 분석기 (실습용 기본 버전)
 """
 
+# yfinance보다 먼저: 한글 Windows 경로 SSL 우회
+import ssl_fix  # noqa: F401
+
 from datetime import date, timedelta
 
 import streamlit as st

@@ -26,7 +26,14 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
+Windows에서는 `.\run.ps1` 로도 실행할 수 있습니다.
+
 브라우저에서 `http://localhost:8501` 로 접속합니다.
+
+### Windows 한글 사용자 경로 안내
+
+Windows 계정 이름에 한글이 있으면 yfinance(curl_cffi)가 인증서 파일을 읽지 못해 주가 조회가 실패할 수 있습니다.  
+`ssl_fix.py`가 CA 번들을 `C:\Temp\stock_analyzer_cacert.pem`으로 복사하고 환경 변수를 맞춰 두므로, `streamlit run app.py`만 하면 됩니다.
 
 ## 사용법
 
@@ -40,6 +47,8 @@ streamlit run app.py
 | 파일 | 설명 |
 |------|------|
 | `app.py` | 메인 Streamlit 앱 |
+| `ssl_fix.py` | Windows 한글 경로 SSL 우회 |
+| `run.ps1` | Windows용 실행 스크립트 |
 | `stocks.py` | 종목 이름/코드 카탈로그 |
 | `app_full.py` | 확장 기능 백업(검색·음성 등) |
 | `test_samsung_stock.py` / `test_apple_stock.py` | yfinance 조회 테스트 |

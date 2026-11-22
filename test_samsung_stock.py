@@ -2,6 +2,8 @@
 yfinance로 삼성전자(005930.KS) 데이터를 가져오는 테스트 스크립트
 """
 
+import ssl_fix  # noqa: F401
+
 import yfinance as yf
 
 

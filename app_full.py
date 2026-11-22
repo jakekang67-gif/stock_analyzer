@@ -5,6 +5,9 @@
 - Plotly 차트 + Streamlit UI (PC·모바일 대응)
 """
 
+# yfinance보다 먼저: 한글 Windows 경로 SSL 우회
+import ssl_fix  # noqa: F401
+
 import streamlit as st
 import streamlit.components.v1 as components
 import yfinance as yf
