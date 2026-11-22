@@ -6,6 +6,7 @@
 """
 
 import streamlit as st
+import streamlit.components.v1 as components
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
@@ -109,6 +110,48 @@ st.markdown(
 
 st.title("📈 상승 추세를 찾는 주식 데이터 분석기")
 st.caption("야후 파이낸스 데이터 · 이동평균(MA) 기반 기술적 분석 · PC·모바일 지원")
+
+# Streamlit Cloud 하단 'Manage app' 등 오버레이 숨김 시도
+# (앱 iframe 밖 요소는 브라우저 보안상 숨기지 못할 수 있음)
+components.html(
+    """
+    <script>
+    (function () {
+      function hideExtras(doc) {
+        if (!doc) return;
+        try {
+          doc.querySelectorAll("button, a, div, span").forEach(function (el) {
+            var t = ((el.innerText || el.textContent || "") + "").trim();
+            if (!t) return;
+            if (t === "Manage app" || t.indexOf("Manage app") === 0) {
+              el.style.setProperty("display", "none", "important");
+              var p = el.parentElement;
+              if (p) p.style.setProperty("display", "none", "important");
+            }
+          });
+          doc.querySelectorAll(
+            '[class*="viewerBadge"], [class*="stDeploy"], [data-testid="stStatusWidget"]'
+          ).forEach(function (el) {
+            el.style.setProperty("display", "none", "important");
+          });
+        } catch (e) {}
+      }
+      function run() {
+        hideExtras(document);
+        try { hideExtras(window.parent && window.parent.document); } catch (e) {}
+      }
+      run();
+      var n = 0;
+      var iv = setInterval(function () {
+        run();
+        n += 1;
+        if (n > 20) clearInterval(iv);
+      }, 500);
+    })();
+    </script>
+    """,
+    height=0,
+)
 
 
 # ---------------------------------------------------------------------------
