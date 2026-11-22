@@ -107,6 +107,16 @@ st.markdown(
             padding-bottom: 50vh !important;
         }
     }
+
+    /* 「Press Enter to apply」 안내 숨김 */
+    [data-testid="InputInstructions"],
+    .stTextInput div[data-baseweb] span,
+    .st-key-stock_query_input [data-testid="InputInstructions"] {
+        display: none !important;
+        visibility: hidden !important;
+        height: 0 !important;
+        overflow: hidden !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -437,14 +447,15 @@ with st.sidebar:
     if "stock_query_input" not in st.session_state:
         st.session_state["stock_query_input"] = ""
 
+    # live=True: 글자 입력 즉시 반영 → 「Press Enter to apply」 없음
     stock_query = (
         st.text_input(
             "이름 또는 코드",
             placeholder="예 : 삼성전자 또는 005930",
             help="한 글자만 입력해도 그 글자로 시작하는 종목이 검색됩니다.",
             key="stock_query_input",
-            type="search",
             autocomplete="off",
+            live=True,
         )
         or ""
     ).strip()
@@ -453,8 +464,8 @@ with st.sidebar:
     selected_label = None
     matches = search_stocks(stock_query) if stock_query else []
 
-    # 검색 결과는 기본 공백. 입력 시에만 후보 표시 (위젯 키는 하나로 유지)
-    blank = ""
+    # 검색 결과: 입력 전에는 비움, 입력 후 시작 일치 종목만 표시
+    blank = " "
     if stock_query and matches:
         result_options = [blank] + [format_stock_label(m) for m in matches]
     else:
@@ -466,11 +477,39 @@ with st.sidebar:
         index=0,
         help="원하는 종목을 선택하세요.",
         key="search_result_select",
+        format_func=lambda x: "" if (x or "").strip() == "" else x,
     )
 
     if stock_query and matches:
-        if selected_label:
-            real_labels = result_options[1:]
+        # 키보드에 가리지 않도록 검색 결과 쪽으로 스크롤
+        components.html(
+            """
+            <script>
+            (function () {
+              function go() {
+                try {
+                  var doc = window.parent.document;
+                  var nodes = doc.querySelectorAll("label, p, div, span");
+                  for (var i = 0; i < nodes.length; i++) {
+                    var t = ((nodes[i].innerText || "") + "").trim();
+                    if (t.indexOf("검색 결과") === 0) {
+                      nodes[i].scrollIntoView({ block: "start", behavior: "smooth" });
+                      var side = doc.querySelector('[data-testid="stSidebar"]');
+                      if (side) side.scrollTop = Math.max(0, (nodes[i].offsetTop || 0) - 24);
+                      break;
+                    }
+                  }
+                } catch (e) {}
+              }
+              setTimeout(go, 150);
+              setTimeout(go, 450);
+            })();
+            </script>
+            """,
+            height=0,
+        )
+        if selected_label and selected_label.strip():
+            real_labels = [x for x in result_options if x.strip()]
             selected_ticker = matches[real_labels.index(selected_label)]["ticker"]
             st.caption(f"선택됨: **{selected_label}**")
         else:
@@ -518,8 +557,8 @@ with st.sidebar:
         "비교 종목 (쉼표로 구분)",
         value="애플, 테슬라",
         help="이름 또는 코드 가능. 예: 마이크로소프트, TSLA, 000660.KS",
-        type="search",
         autocomplete="off",
+        live=True,
     )
     invest_amount = st.number_input(
         "가상 투자 금액",
