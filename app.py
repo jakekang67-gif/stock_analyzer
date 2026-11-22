@@ -104,7 +104,7 @@ st.markdown(
         }
         /* 키보드에 가리지 않도록 아래에 스크롤 여유 */
         section[data-testid="stSidebar"] [data-testid="stSidebarContent"] {
-            padding-bottom: 50vh !important;
+            padding-bottom: 18vh !important;
         }
     }
 
