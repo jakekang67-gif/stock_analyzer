@@ -1,708 +1,620 @@
 """
-상승 추세를 찾는 실시간 주식 데이터 분석기
-- yfinance로 주가 조회
-- 이동평균(MA)으로 상승 추세 판별
-- Plotly 차트 + Streamlit UI (PC·모바일 대응)
+Streamlit 주식 데이터 분석기 (실습용 기본 버전)
 """
 
+from datetime import date, timedelta
+
 import streamlit as st
-import streamlit.components.v1 as components
 import yfinance as yf
-import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from stocks import (
-    STOCK_CATALOG,
-    resolve_many,
-    resolve_to_ticker,
-)
-from stock_search_comp import stock_search_widget
+from stocks import STOCK_CATALOG
+
+# 종목 비교 차트용 색상 팔레트
+COMPARE_COLORS = [
+    "#1f77b4",
+    "#ff7f0e",
+    "#2ca02c",
+    "#d62728",
+    "#9467bd",
+    "#8c564b",
+    "#e377c2",
+    "#7f7f7f",
+    "#bcbd22",
+    "#17becf",
+]
 
 
-# ---------------------------------------------------------------------------
-# 페이지 설정
-# ---------------------------------------------------------------------------
-st.set_page_config(
-    page_title="주식 데이터 분석기",
-    page_icon="📈",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# PC·모바일 공통 반응형 스타일 + 하단 Streamlit UI 숨김
-st.markdown(
-    """
-    <style>
-    /* 기본 여백 축소 */
-    .block-container {
-        padding-top: 1.2rem;
-        padding-bottom: 2rem;
-        padding-left: 1rem;
-        padding-right: 1rem;
-        max-width: 1100px;
-    }
-
-    h1 {
-        font-size: 1.6rem !important;
-        line-height: 1.35 !important;
-        margin-bottom: 0.35rem !important;
-    }
-
-    [data-testid="stMetricValue"] { font-size: 1.15rem !important; }
-    [data-testid="stMetricLabel"] { font-size: 0.85rem !important; }
-    [data-testid="stDataFrame"] { overflow-x: auto; }
-
-    /* Streamlit 기본 메뉴·푸터·장식 숨김 */
-    #MainMenu { visibility: hidden; }
-    footer { visibility: hidden; }
-    header { visibility: hidden; }
-    [data-testid="stToolbar"] { display: none !important; }
-    [data-testid="stDecoration"] { display: none !important; }
-    [data-testid="stStatusWidget"] { display: none !important; }
-    .stDeployButton { display: none !important; }
-    .stAppDeployButton { display: none !important; }
-
-    /* Streamlit Cloud 하단 배지 / Manage app 계열 */
-    div[class*="viewerBadge"],
-    a[class*="viewerBadge"],
-    a[href*="streamlit.io"],
-    a[href*="share.streamlit.io"] {
-        display: none !important;
-        visibility: hidden !important;
-        pointer-events: none !important;
-    }
-
-    /* 모바일: 설정(사이드바) 가로 꽉 채우기 */
-    @media (max-width: 768px) {
-        .block-container {
-            padding-top: 0.8rem;
-            padding-left: 0.6rem;
-            padding-right: 0.6rem;
-        }
-        h1 { font-size: 1.25rem !important; }
-        [data-testid="stMetricValue"] { font-size: 1rem !important; }
-
-        section[data-testid="stSidebar"] {
-            width: 100vw !important;
-            min-width: 100vw !important;
-            max-width: 100vw !important;
-            transform: translateX(0) !important;
-        }
-        section[data-testid="stSidebar"] > div {
-            width: 100% !important;
-            max-width: 100vw !important;
-        }
-        section[data-testid="stSidebar"] .block-container {
-            padding-top: 1rem;
-            padding-left: 1rem;
-            padding-right: 1rem;
-        }
-        /* 사이드바 열렸을 때 본문이 비치지 않도록 */
-        [data-testid="stSidebarContent"] {
-            width: 100% !important;
-        }
-        /* 키보드에 가리지 않도록 아래에 스크롤 여유 */
-        section[data-testid="stSidebar"] [data-testid="stSidebarContent"] {
-            padding-bottom: 18vh !important;
-        }
-    }
-
-    /* 「Press Enter to apply」 안내 숨김 */
-    [data-testid="InputInstructions"],
-    .stTextInput div[data-baseweb] span,
-    .st-key-stock_query_input [data-testid="InputInstructions"] {
-        display: none !important;
-        visibility: hidden !important;
-        height: 0 !important;
-        overflow: hidden !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-st.title("📈 상승 추세를 찾는 주식 데이터 분석기")
-st.caption("야후 파이낸스 데이터 · 이동평균(MA) 기반 기술적 분석 · PC·모바일 지원")
-
-# Streamlit Cloud 하단 UI 숨김 + 자동완성 끄기 + 키보드 가림 방지 스크롤
-# (앱 iframe 밖 요소는 브라우저 보안상 숨기지 못할 수 있음)
-components.html(
-    """
-    <script>
-    (function () {
-      function hideExtras(doc) {
-        if (!doc) return;
-        try {
-          doc.querySelectorAll("button, a, div, span").forEach(function (el) {
-            var t = ((el.innerText || el.textContent || "") + "").trim();
-            if (!t) return;
-            if (t === "Manage app" || t.indexOf("Manage app") === 0) {
-              el.style.setProperty("display", "none", "important");
-              var p = el.parentElement;
-              if (p) p.style.setProperty("display", "none", "important");
-            }
-          });
-          doc.querySelectorAll(
-            '[class*="viewerBadge"], [class*="stDeploy"], [data-testid="stStatusWidget"]'
-          ).forEach(function (el) {
-            el.style.setProperty("display", "none", "important");
-          });
-        } catch (e) {}
-      }
-
-      function disableAutofill(doc) {
-        if (!doc) return;
-        try {
-          doc.querySelectorAll("input, textarea, select").forEach(function (el) {
-            el.setAttribute("autocomplete", "off");
-            el.setAttribute("autocorrect", "off");
-            el.setAttribute("autocapitalize", "off");
-            el.setAttribute("spellcheck", "false");
-            el.setAttribute("data-lpignore", "true");
-            el.setAttribute("data-form-type", "other");
-            el.setAttribute("data-1p-ignore", "true");
-            // 삼성/크롬이 비밀번호·결제·주소로 오인하지 않도록
-            if (!el.getAttribute("name") || /pass|email|address|card|pay/i.test(el.getAttribute("name") || "")) {
-              el.setAttribute("name", "stock-search-" + Math.random().toString(36).slice(2, 8));
-            }
-            if ((el.getAttribute("type") || "") === "password") {
-              el.setAttribute("type", "text");
-            }
-            if (!el.dataset.scrollBound) {
-              el.dataset.scrollBound = "1";
-              el.addEventListener("focus", function () {
-                setTimeout(function () {
-                  try {
-                    el.scrollIntoView({ block: "center", behavior: "smooth", inline: "nearest" });
-                  } catch (e) {}
-                }, 350);
-              });
-            }
-          });
-        } catch (e) {}
-      }
-
-      function scrollSearchResult(doc) {
-        if (!doc) return;
-        try {
-          var labels = doc.querySelectorAll("label, p, div, span");
-          for (var i = 0; i < labels.length; i++) {
-            var t = ((labels[i].innerText || labels[i].textContent || "") + "").trim();
-            if (t.indexOf("검색 결과") === 0 || t === "검색 결과") {
-              setTimeout(function () {
-                try {
-                  labels[i].scrollIntoView({ block: "center", behavior: "smooth" });
-                } catch (e) {}
-              }, 200);
-              break;
-            }
-          }
-        } catch (e) {}
-      }
-
-      function run() {
-        hideExtras(document);
-        disableAutofill(document);
-        try { hideExtras(window.parent && window.parent.document); } catch (e) {}
-        try { disableAutofill(window.parent && window.parent.document); } catch (e) {}
-      }
-      run();
-      scrollSearchResult(document);
-      var n = 0;
-      var iv = setInterval(function () {
-        run();
-        n += 1;
-        if (n > 30) clearInterval(iv);
-      }, 400);
-    })();
-    </script>
-    """,
-    height=0,
-)
+def korean_company_name(ticker: str, info: dict | None = None) -> str:
+    """가능하면 한국어 회사명을 반환합니다. (예: 삼성전자)"""
+    t = ticker.strip().upper()
+    for item in STOCK_CATALOG:
+        if item["ticker"].upper() == t:
+            return item["name"]
+    # 목록에 없으면 yfinance 이름 사용
+    if info:
+        return info.get("shortName") or info.get("longName") or ticker
+    return ticker
 
 
-# ---------------------------------------------------------------------------
-# 헬퍼 함수
-# ---------------------------------------------------------------------------
-def currency_label(code: str) -> str:
-    """통화 코드를 한국어 표기로 변환합니다."""
-    mapping = {
-        "USD": "달러",
-        "KRW": "원",
-        "JPY": "엔",
-        "EUR": "유로",
-        "GBP": "파운드",
-        "CNY": "위안",
-        "HKD": "홍콩달러",
-    }
-    return mapping.get(code, code)
+def parse_tickers(raw: str) -> list[str]:
+    """쉼표로 구분된 종목 코드를 정리해 목록으로 반환합니다."""
+    parts = [p.strip().upper() for p in raw.replace("，", ",").split(",")]
+    # 빈 항목 제거 + 순서 유지한 중복 제거
+    seen: set[str] = set()
+    tickers: list[str] = []
+    for p in parts:
+        if p and p not in seen:
+            seen.add(p)
+            tickers.append(p)
+    return tickers
 
 
-def format_money(value: float, currency: str) -> str:
-    """금액을 통화에 맞게 표시합니다. (원화는 소수점 없음)"""
-    label = currency_label(currency)
-    if currency == "KRW":
-        return f"{value:,.0f} {label}"
-    return f"{value:,.2f} {label}"
+st.set_page_config(page_title="주식 데이터 분석기", page_icon="📈", layout="wide")
 
+st.title("주식 데이터 분석기")
+st.caption("yfinance로 주식 데이터를 조회합니다.")
 
-@st.cache_data(ttl=300)
-def fetch_history(ticker: str, period: str) -> pd.DataFrame:
-    """종목의 기간별 시세 데이터를 가져옵니다."""
-    stock = yf.Ticker(ticker)
-    df = stock.history(period=period)
-    if df.empty:
-        return df
-    return df.reset_index()
-
-
-@st.cache_data(ttl=300)
-def fetch_info(ticker: str) -> dict:
-    """종목 기본 정보(현재가, 등락률 등)를 가져옵니다."""
-    return yf.Ticker(ticker).info
-
-
-def add_moving_averages(df: pd.DataFrame, short: int = 20, long: int = 60) -> pd.DataFrame:
-    """단기·장기 이동평균을 추가합니다."""
-    df = df.copy()
-    df[f"MA{short}"] = df["Close"].rolling(window=short).mean()
-    df[f"MA{long}"] = df["Close"].rolling(window=long).mean()
-    return df
-
-
-def detect_uptrend(df: pd.DataFrame, short: int = 20, long: int = 60) -> dict:
-    """이동평균 기반 상승 추세 판별."""
-    ma_s = f"MA{short}"
-    ma_l = f"MA{long}"
-
-    if len(df) < long or df[ma_s].isna().iloc[-1] or df[ma_l].isna().iloc[-1]:
-        return {
-            "is_uptrend": False,
-            "label": "데이터 부족",
-            "detail": f"이동평균 계산에 최소 {long}거래일이 필요합니다.",
-            "golden_cross": False,
-        }
-
-    latest = df.iloc[-1]
-    prev = df.iloc[-2]
-    price_above_ma = latest["Close"] > latest[ma_s]
-    ma_aligned = latest[ma_s] > latest[ma_l]
-    ma_rising = latest[ma_s] > prev[ma_s]
-
-    golden_cross = False
-    lookback = min(5, len(df) - 1)
-    for i in range(-lookback, 0):
-        curr, before = df.iloc[i], df.iloc[i - 1]
-        if pd.notna(before[ma_s]) and pd.notna(before[ma_l]):
-            if before[ma_s] <= before[ma_l] and curr[ma_s] > curr[ma_l]:
-                golden_cross = True
-                break
-
-    is_uptrend = ma_aligned and price_above_ma
-
-    if golden_cross and is_uptrend:
-        label, detail = "🚀 강한 상승 추세", "정배열 + 최근 골든크로스 발생"
-    elif is_uptrend and ma_rising:
-        label, detail = (
-            "📈 상승 추세",
-            "단기 이동평균 > 장기 이동평균, 종가가 단기 이동평균 위, 이동평균 우상향",
-        )
-    elif is_uptrend:
-        label, detail = "📈 상승 추세 (약함)", "정배열이지만 단기 이동평균 상승세는 둔화"
-    elif ma_aligned:
-        label, detail = "⚠️ 혼조", "정배열이지만 종가가 단기 이동평균 아래"
-    else:
-        label, detail = "📉 하락/횡보 추세", "단기 이동평균이 장기 이동평균 아래 (역배열)"
-
-    return {
-        "is_uptrend": is_uptrend,
-        "label": label,
-        "detail": detail,
-        "golden_cross": golden_cross,
-    }
-
-
-def chart_layout_opts(height: int) -> dict:
-    """PC·모바일 공통 차트 레이아웃 옵션."""
-    return dict(
-        height=height,
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="left",
-            x=0,
-            font=dict(size=11),
-        ),
-        margin=dict(l=48, r=16, t=56, b=36),
-        hovermode="x unified",
-        dragmode="pan",
-        font=dict(family="Malgun Gothic, Apple SD Gothic Neo, sans-serif"),
-    )
-
-
-def build_price_chart(
-    df: pd.DataFrame, ticker: str, short: int, long: int, height: int = 520
-) -> go.Figure:
-    """종가 + 이동평균 + 거래량 차트."""
-    fig = make_subplots(
-        rows=2,
-        cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.08,
-        row_heights=[0.7, 0.3],
-        subplot_titles=(f"{ticker} 주가와 이동평균", "거래량"),
-    )
-    fig.add_trace(
-        go.Scatter(x=df["Date"], y=df["Close"], name="종가", line=dict(color="#1f77b4", width=2)),
-        row=1, col=1,
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=df["Date"],
-            y=df[f"MA{short}"],
-            name=f"단기 이동평균({short}일)",
-            line=dict(color="#ff7f0e", width=1.5, dash="dot"),
-        ),
-        row=1, col=1,
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=df["Date"],
-            y=df[f"MA{long}"],
-            name=f"장기 이동평균({long}일)",
-            line=dict(color="#2ca02c", width=1.5, dash="dash"),
-        ),
-        row=1, col=1,
-    )
-    colors = ["#ef5350" if c < o else "#26a69a" for c, o in zip(df["Close"], df["Open"])]
-    fig.add_trace(
-        go.Bar(x=df["Date"], y=df["Volume"], name="거래량", marker_color=colors),
-        row=2, col=1,
-    )
-    fig.update_layout(**chart_layout_opts(height))
-    fig.update_yaxes(title_text="가격", row=1, col=1)
-    fig.update_yaxes(title_text="거래량", row=2, col=1)
-    fig.update_xaxes(title_text="날짜", row=2, col=1)
-    return fig
-
-
-def build_compare_chart(data: dict[str, pd.DataFrame], height: int = 380) -> go.Figure:
-    """여러 종목의 정규화(시작=100) 수익률 비교 차트."""
-    fig = go.Figure()
-    for ticker, df in data.items():
-        if df.empty:
-            continue
-        normalized = (df["Close"] / df["Close"].iloc[0]) * 100
-        fig.add_trace(go.Scatter(x=df["Date"], y=normalized, name=ticker, mode="lines"))
-    fig.update_layout(
-        **chart_layout_opts(height),
-        title="종목 비교 (시작점 = 100)",
-        yaxis_title="정규화 지수",
-        xaxis_title="날짜",
-    )
-    return fig
-
-
-def calc_profit(df: pd.DataFrame, amount: float) -> dict | None:
-    """과거 첫 거래일 매수 → 현재 가정 수익률."""
-    if df.empty or len(df) < 2:
-        return None
-    buy_price = float(df["Close"].iloc[0])
-    sell_price = float(df["Close"].iloc[-1])
-    shares = amount / buy_price
-    profit = shares * (sell_price - buy_price)
-    return_rate = ((sell_price - buy_price) / buy_price) * 100
-    return {
-        "buy_date": df["Date"].iloc[0],
-        "buy_price": buy_price,
-        "sell_price": sell_price,
-        "shares": shares,
-        "profit": profit,
-        "return_rate": return_rate,
-        "final_value": amount + profit,
-    }
-
-
-PLOTLY_CONFIG = {
-    "responsive": True,
-    "displayModeBar": True,
-    "scrollZoom": True,
-    "displaylogo": False,
-    "modeBarButtonsToRemove": ["lasso2d", "select2d"],
-    "toImageButtonOptions": {"format": "png", "filename": "주식차트"},
-}
-
-
-# ---------------------------------------------------------------------------
-# 사이드바 — 입력
-# ---------------------------------------------------------------------------
+# ============================================================
+# 사이드바: 수익률 계산기
+# ============================================================
 with st.sidebar:
-    st.header("⚙️ 설정")
-    st.caption("📱 모바일: 왼쪽 위 ≫ 메뉴에서 설정을 열 수 있습니다.")
+    st.header("수익률 계산기")
+    st.caption("매수일 종가 기준으로 현재 가치·수익률을 계산합니다.")
 
-    st.subheader("종목 검색")
-    # 한글 IME에서도 즉시 필터되도록 브라우저 쪽 검색 위젯 사용
-    # (Choose an option / Enter 안내 없음, 결과가 리스트로 바로 표시)
-    search_value = stock_search_widget(
-        STOCK_CATALOG,
-        default_query=st.session_state.get("last_query", ""),
-        default_ticker=st.session_state.get("last_ticker"),
-        key="stock_search_widget",
+    # 단일 종목 조회 결과가 있으면 기본 종목으로 사용
+    default_calc_ticker = "005930.KS"
+    if "stock_result" in st.session_state:
+        # 메인 입력과 맞추기 위해 session에 ticker도 저장되어 있으면 사용
+        default_calc_ticker = st.session_state.get("last_ticker", default_calc_ticker)
+
+    calc_ticker = st.text_input(
+        "종목 코드",
+        value=default_calc_ticker,
+        help="예: 005930.KS, AAPL",
+        key="calc_ticker",
+    ).strip()
+
+    today = date.today()
+    calc_buy_date = st.date_input(
+        "매수 날짜",
+        value=today - timedelta(days=90),
+        max_value=today,
+        key="calc_buy_date",
+    )
+    calc_amount = st.number_input(
+        "매수 금액",
+        min_value=0.0,
+        value=1_000_000.0,
+        step=10_000.0,
+        format="%.0f",
+        help="해당 통화 기준 투자 금액 (한국 종목=원, 미국=달러)",
+        key="calc_amount",
     )
 
-    selected_ticker = None
-    selected_label = None
-    stock_query = ""
-
-    if isinstance(search_value, dict):
-        stock_query = (search_value.get("query") or "").strip()
-        selected_ticker = search_value.get("ticker")
-        selected_label = search_value.get("label")
-        # 목록에 없는 코드만 들어온 경우 정규화
-        if stock_query and not selected_ticker:
-            selected_ticker = resolve_to_ticker(stock_query)
-        if selected_ticker and not selected_label:
-            selected_label = selected_ticker
-    elif st.session_state.get("last_ticker"):
-        # 위젯이 아직 값을 안 보낸 경우 이전 선택 유지
-        selected_ticker = st.session_state.get("last_ticker")
-        selected_label = st.session_state.get("last_stock_label", selected_ticker)
-
-    period = st.selectbox(
-        "조회 기간",
-        options=["1mo", "3mo", "6mo", "1y", "2y", "5y"],
-        index=3,
-        format_func=lambda x: {
-            "1mo": "1개월",
-            "3mo": "3개월",
-            "6mo": "6개월",
-            "1y": "1년",
-            "2y": "2년",
-            "5y": "5년",
-        }[x],
-    )
-
-    st.subheader("이동평균 기간")
-    col_ma1, col_ma2 = st.columns(2)
-    with col_ma1:
-        ma_short = st.number_input("단기(일)", min_value=5, max_value=50, value=20, step=1)
-    with col_ma2:
-        ma_long = st.number_input("장기(일)", min_value=20, max_value=200, value=60, step=5)
-
-    if ma_short >= ma_long:
-        st.warning("단기 이동평균은 장기 이동평균보다 작아야 합니다.")
-
-    chart_size = st.radio(
-        "화면 / 차트 크기",
-        options=["자동(권장)", "모바일", "PC"],
-        index=0,
-        horizontal=True,
-        help="모바일에서 차트가 크면 '모바일'을 선택하세요.",
-    )
-
-    st.divider()
-    compare_raw = st.text_input(
-        "비교 종목 (쉼표로 구분)",
-        value="애플, 테슬라",
-        help="이름 또는 코드 가능. 예: 마이크로소프트, TSLA, 000660.KS",
-        autocomplete="off",
-        live=True,
-    )
-    invest_amount = st.number_input(
-        "가상 투자 금액",
-        min_value=100.0,
-        value=10000.0,
-        step=100.0,
-        help="선택한 기간 시작일에 매수했다고 가정합니다.",
-    )
-
-    analyze = st.button("분석하기", type="primary", use_container_width=True)
-
-
-# 차트 높이
-if chart_size == "모바일":
-    price_chart_h, compare_chart_h = 420, 300
-elif chart_size == "PC":
-    price_chart_h, compare_chart_h = 560, 420
-else:
-    price_chart_h, compare_chart_h = 480, 340
-
-
-# ---------------------------------------------------------------------------
-# 메인 영역
-# ---------------------------------------------------------------------------
-if not analyze and "last_ticker" not in st.session_state:
-    st.info("왼쪽 **설정**에서 종목을 검색·선택한 뒤 **분석하기**를 눌러 주세요. (모바일은 왼쪽 위 ≫ 메뉴)")
-    st.markdown(
-        """
-        ### 사용 예시
-        | 시장 | 검색어 예 | 코드 |
-        |------|-----------|------|
-        | 한국 | `삼` / `삼성전자` | `005930.KS` |
-        | 한국 | `하이닉스` | `000660.KS` |
-        | 미국 | `애` / `애플` / `AAPL` | `AAPL` |
-        | 미국 | `테슬라` / `TSLA` | `TSLA` |
-        """
-    )
-    st.stop()
-
-if analyze:
-    # 목록에서 고르지 않았고 fallback 코드만 있는 경우
-    if (
-        not selected_ticker
-        and isinstance(search_value, dict)
-        and search_value.get("fallback")
-    ):
-        selected_ticker = search_value.get("fallback")
-        selected_label = selected_ticker
-
-    if not selected_ticker:
-        st.error("종목을 검색한 뒤 결과 목록에서 종목을 선택해 주세요.")
-        st.stop()
-    st.session_state["last_ticker"] = selected_ticker
-    st.session_state["last_stock_label"] = selected_label or selected_ticker
-    st.session_state["selected_stock_label"] = selected_label
-    st.session_state["last_query"] = stock_query
-    st.session_state["last_period"] = period
-    st.session_state["last_ma_short"] = ma_short
-    st.session_state["last_ma_long"] = ma_long
-    st.session_state["last_compare"] = compare_raw
-    st.session_state["last_amount"] = invest_amount
-    st.session_state["last_chart_size"] = chart_size
-
-ticker = st.session_state.get("last_ticker", selected_ticker)
-period = st.session_state.get("last_period", period)
-ma_short = int(st.session_state.get("last_ma_short", ma_short))
-ma_long = int(st.session_state.get("last_ma_long", ma_long))
-compare_raw = st.session_state.get("last_compare", compare_raw)
-invest_amount = float(st.session_state.get("last_amount", invest_amount))
-chart_size = st.session_state.get("last_chart_size", chart_size)
-display_label = st.session_state.get("last_stock_label", ticker)
-
-if chart_size == "모바일":
-    price_chart_h, compare_chart_h = 420, 300
-elif chart_size == "PC":
-    price_chart_h, compare_chart_h = 560, 420
-else:
-    price_chart_h, compare_chart_h = 480, 340
-
-if not ticker:
-    st.error("종목이 선택되지 않았습니다.")
-    st.stop()
-
-if ma_short >= ma_long:
-    st.error("단기 이동평균은 장기 이동평균보다 작아야 합니다. 설정에서 수정해 주세요.")
-    st.stop()
-
-with st.spinner(f"{display_label} 데이터를 불러오는 중..."):
-    try:
-        df = fetch_history(ticker, period)
-        info = fetch_info(ticker)
-    except Exception as e:
-        st.error(f"데이터를 가져오지 못했습니다: {e}")
-        st.stop()
-
-if df.empty:
-    st.error(f"`{ticker}` 데이터를 찾을 수 없습니다. 종목 이름/코드를 확인해 주세요.")
-    st.stop()
-
-df = add_moving_averages(df, ma_short, ma_long)
-trend = detect_uptrend(df, ma_short, ma_long)
-
-name = info.get("shortName") or info.get("longName") or display_label
-currency = info.get("currency", "USD")
-current = info.get("currentPrice") or info.get("regularMarketPrice") or float(df["Close"].iloc[-1])
-prev_close = info.get("previousClose") or (
-    float(df["Close"].iloc[-2]) if len(df) > 1 else current
-)
-change = current - prev_close
-change_pct = (change / prev_close * 100) if prev_close else 0.0
-
-st.subheader(f"{name} (`{ticker}`)")
-
-row1 = st.columns(2)
-row2 = st.columns(2)
-row1[0].metric("현재가", format_money(current, currency), f"{change:+.2f} ({change_pct:+.2f}%)")
-row1[1].metric("기간 시작가", format_money(float(df["Close"].iloc[0]), currency))
-row2[0].metric("기간 최고가", format_money(float(df["High"].max()), currency))
-row2[1].metric("기간 최저가", format_money(float(df["Low"].min()), currency))
-
-if trend["is_uptrend"]:
-    st.success(f"**{trend['label']}** — {trend['detail']}")
-else:
-    st.warning(f"**{trend['label']}** — {trend['detail']}")
-
-if trend["golden_cross"]:
-    st.info("✨ 최근 5거래일 내 **골든크로스**(단기 이동평균이 장기 이동평균을 상향 돌파)가 감지되었습니다.")
-
-st.plotly_chart(
-    build_price_chart(df, ticker, ma_short, ma_long, height=price_chart_h),
-    use_container_width=True,
-    config=PLOTLY_CONFIG,
-)
-
-st.subheader("💰 가상 투자 수익률")
-result = calc_profit(df, invest_amount)
-if result:
-    r1, r2 = st.columns(2)
-    r1.metric("매수가 (기간 시작)", format_money(result["buy_price"], currency))
-    r2.metric("현재가 (기간 끝)", format_money(result["sell_price"], currency))
-    st.metric(
-        "수익 / 수익률",
-        format_money(result["profit"], currency),
-        f"{result['return_rate']:+.2f}%",
-    )
-    st.caption(
-        f"{result['buy_date'].strftime('%Y-%m-%d')}에 "
-        f"{format_money(invest_amount, currency)} 매수 → "
-        f"평가금 {format_money(result['final_value'], currency)}"
-    )
-
-st.subheader("📊 종목 비교")
-compare_tickers = [t for t in resolve_many(compare_raw) if t != ticker]
-all_tickers = [ticker] + compare_tickers
-
-compare_data: dict[str, pd.DataFrame] = {ticker: df}
-failed = []
-for t in all_tickers[1:]:
-    try:
-        cdf = fetch_history(t, period)
-        if cdf.empty:
-            failed.append(t)
+    if st.button("수익률 계산", type="primary", key="btn_calc"):
+        if not calc_ticker:
+            st.error("종목 코드를 입력해 주세요.")
+        elif calc_amount <= 0:
+            st.error("매수 금액을 0보다 크게 입력해 주세요.")
         else:
-            compare_data[t] = cdf
-    except Exception:
-        failed.append(t)
+            with st.spinner("계산 중..."):
+                try:
+                    stock = yf.Ticker(calc_ticker)
+                    # 매수일~오늘 (+여유일) 데이터 조회
+                    end_date = today + timedelta(days=1)
+                    hist = stock.history(start=calc_buy_date, end=end_date)
+                    if hist.empty or "Close" not in hist.columns:
+                        st.error("해당 기간 주가 데이터가 없습니다.")
+                    else:
+                        hist = hist.sort_index()
+                        idx = hist.index
+                        # 타임존 제거 후 날짜만 비교
+                        if getattr(idx, "tz", None) is not None:
+                            idx_dates = idx.tz_localize(None).date
+                        else:
+                            idx_dates = idx.date
 
-if len(compare_data) > 1:
-    st.plotly_chart(
-        build_compare_chart(compare_data, height=compare_chart_h),
-        use_container_width=True,
-        config=PLOTLY_CONFIG,
-    )
-    rows = []
-    for t, cdf in compare_data.items():
-        cdf_ma = add_moving_averages(cdf, ma_short, ma_long)
-        t_trend = detect_uptrend(cdf_ma, ma_short, ma_long)
-        ret = ((cdf["Close"].iloc[-1] / cdf["Close"].iloc[0]) - 1) * 100
-        rows.append(
-            {
-                "종목": t,
-                "기간 수익률(%)": round(ret, 2),
-                "추세": t_trend["label"],
-                "골든크로스": "있음" if t_trend["golden_cross"] else "없음",
+                        buy_d = calc_buy_date
+                        # 매수일 당일 또는 이후 첫 거래일
+                        buy_pos = None
+                        for i, d in enumerate(idx_dates):
+                            if d >= buy_d:
+                                buy_pos = i
+                                break
+                        if buy_pos is None:
+                            st.error("매수 날짜 이후 거래 데이터가 없습니다.")
+                        else:
+                            buy_row = hist.iloc[buy_pos]
+                            buy_close = float(buy_row["Close"])
+                            actual_buy_date = idx_dates[buy_pos]
+                            last_close = float(hist["Close"].iloc[-1])
+                            last_date = idx_dates[-1]
+
+                            if buy_close <= 0:
+                                st.error("매수일 종가가 유효하지 않습니다.")
+                            else:
+                                shares = calc_amount / buy_close
+                                current_value = shares * last_close
+                                profit = current_value - calc_amount
+                                return_pct = (profit / calc_amount) * 100.0
+                                name = korean_company_name(calc_ticker, None)
+                                if name == calc_ticker:
+                                    try:
+                                        name = korean_company_name(calc_ticker, stock.info)
+                                    except Exception:
+                                        name = calc_ticker
+
+                                is_krw = calc_ticker.upper().endswith((".KS", ".KQ"))
+
+                                def amt_fmt(v: float) -> str:
+                                    if is_krw:
+                                        return f"{v:,.0f}원"
+                                    sign_char = "-" if v < 0 else ""
+                                    return f"{sign_char}${abs(v):,.2f}"
+
+                                color = "#2962FF" if profit >= 0 else "#EF5350"
+                                sign = "+" if profit >= 0 else ""
+
+                                note = ""
+                                if actual_buy_date != buy_d:
+                                    note = (
+                                        f"<div style='font-size:0.85rem;color:#666;margin-top:0.35rem;'>"
+                                        f"매수일이 휴장이라 <b>{actual_buy_date}</b> 종가를 사용했습니다."
+                                        f"</div>"
+                                    )
+
+                                st.markdown(
+                                    f"""
+<div style="line-height:1.45; margin-top:0.5rem;">
+  <div style="font-weight:700;">{name}</div>
+  <div style="font-size:0.9rem; color:#555; margin-bottom:0.4rem;">{calc_ticker}</div>
+  <div>매수가 : {amt_fmt(buy_close)} <span style="color:#888;">({actual_buy_date})</span></div>
+  <div>현재가 : {amt_fmt(last_close)} <span style="color:#888;">({last_date})</span></div>
+  <div>매수 금액 : {amt_fmt(calc_amount)}</div>
+  <div>추정 수량 : {shares:,.4f}주</div>
+  <hr style="margin:0.5rem 0; border:none; border-top:1px solid #ddd;"/>
+  <div>현재 가치 : <b style="color:{color};">{amt_fmt(current_value)}</b></div>
+  <div>손익 : <b style="color:{color};">{sign}{amt_fmt(profit)}</b></div>
+  <div>수익률 : <b style="color:{color}; font-size:1.15rem;">{sign}{return_pct:.2f}%</b></div>
+  {note}
+</div>
+""",
+                                    unsafe_allow_html=True,
+                                )
+                except Exception as e:
+                    st.error(f"계산에 실패했습니다: {e}")
+
+# 기간 선택 (단일·비교 공통)
+period_label = st.selectbox(
+    "기간 선택",
+    options=["1개월", "3개월", "6개월", "1년"],
+)
+period_map = {
+    "1개월": "1mo",
+    "3개월": "3mo",
+    "6개월": "6mo",
+    "1년": "1y",
+}
+period = period_map[period_label]
+
+main_single, main_compare = st.tabs(["단일 종목", "종목 비교"])
+
+# ============================================================
+# 탭1: 단일 종목 (선 차트 / 캔들스틱)
+# ============================================================
+with main_single:
+    ticker_input = st.text_input(
+        "종목 코드",
+        value="005930.KS",
+        help="예: 005930.KS(삼성전자), AAPL(애플)",
+        key="single_ticker",
+    ).strip()
+
+    if st.button("데이터 조회", type="primary", key="btn_single"):
+        if not ticker_input:
+            st.error("종목 코드를 입력해 주세요.")
+            st.stop()
+
+        with st.spinner("데이터를 불러오는 중..."):
+            try:
+                stock = yf.Ticker(ticker_input)
+                info = stock.info
+                history = stock.history(period=period)
+            except Exception as e:
+                st.error(f"데이터를 가져오지 못했습니다: {e}")
+                st.stop()
+
+        if history.empty:
+            st.error("역사적 데이터가 비어 있습니다. 종목 코드를 확인해 주세요.")
+            st.stop()
+
+        company_name = korean_company_name(ticker_input, info)
+        current_price = info.get("currentPrice") or info.get("regularMarketPrice")
+        if current_price is None:
+            current_price = float(history["Close"].iloc[-1])
+
+        change_pct = info.get("regularMarketChangePercent")
+        if change_pct is None:
+            prev_close = info.get("previousClose") or info.get("regularMarketPreviousClose")
+            if prev_close:
+                change_pct = ((current_price - prev_close) / prev_close) * 100
+            elif len(history) >= 2:
+                prev = float(history["Close"].iloc[-2])
+                change_pct = ((current_price - prev) / prev) * 100
+
+        currency = info.get("currency", "USD")
+        st.session_state["last_ticker"] = ticker_input.strip().upper()
+        st.session_state["stock_result"] = {
+            "history": history,
+            "company_name": company_name,
+            "current_price": current_price,
+            "change_pct": change_pct,
+            "currency": currency,
+            "period_label": period_label,
+        }
+
+    if "stock_result" in st.session_state:
+        result = st.session_state["stock_result"]
+        history = result["history"]
+        company_name = result["company_name"]
+        current_price = result["current_price"]
+        change_pct = result["change_pct"]
+        currency = result["currency"]
+        saved_period = result["period_label"]
+
+        if currency == "KRW":
+            price_text = f"{current_price:,.0f}원"
+        else:
+            price_text = f"${current_price:,.2f}"
+
+        st.success("데이터 조회가 완료되었습니다.")
+
+        change_text = f"{change_pct:+.2f}%" if change_pct is not None else "계산 불가"
+        st.markdown(
+            f"""
+<div style="line-height:1.35; margin:0.15rem 0 0.35rem 0;">
+  <div style="font-weight:700; margin-bottom:0.15rem;">{company_name}</div>
+  <div style="display:flex; gap:1.5rem; flex-wrap:wrap; font-size:0.95rem;">
+    <span>현재가 : {price_text}</span>
+    <span>전일 대비 등락률 : {change_text}</span>
+    <span>조회 기간 : {saved_period}</span>
+  </div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+        chart_df = history.sort_index(ascending=True).reset_index()
+        chart_df["MA20"] = chart_df["Close"].rolling(window=20, min_periods=20).mean()
+        chart_df["MA60"] = chart_df["Close"].rolling(window=60, min_periods=60).mean()
+        has_ma20 = chart_df["MA20"].notna().any()
+        has_ma60 = chart_df["MA60"].notna().any()
+
+        y_tickformat = ",.0f" if currency == "KRW" else ",.2f"
+        chart_layout = dict(
+            xaxis_title="날짜",
+            yaxis_title="가격",
+            height=480,
+            margin=dict(l=40, r=20, t=60, b=40),
+            hovermode="x unified",
+            xaxis=dict(showgrid=True),
+            yaxis=dict(showgrid=True, tickformat=y_tickformat),
+        )
+
+        ma_col1, ma_col2 = st.columns(2)
+        with ma_col1:
+            show_ma20 = st.checkbox(
+                "MA20 표시 (주황)", value=True, disabled=not has_ma20, key="ma20"
+            )
+        with ma_col2:
+            show_ma60 = st.checkbox(
+                "MA60 표시 (초록)", value=True, disabled=not has_ma60, key="ma60"
+            )
+        if not has_ma20 or not has_ma60:
+            missing = []
+            if not has_ma20:
+                missing.append("MA20")
+            if not has_ma60:
+                missing.append("MA60")
+            st.caption(
+                f"조회 기간 데이터가 부족해 {', '.join(missing)}을(를) 그릴 수 없습니다. "
+                "기간을 늘려 다시 조회해 주세요."
+            )
+
+        def add_ma_traces(fig, row=None, col=None):
+            """선택된 이동평균선을 차트에 추가합니다."""
+            kwargs = {}
+            if row is not None and col is not None:
+                kwargs = {"row": row, "col": col}
+            if show_ma20 and has_ma20:
+                fig.add_trace(
+                    go.Scatter(
+                        x=chart_df["Date"],
+                        y=chart_df["MA20"],
+                        mode="lines",
+                        name="MA20",
+                        line=dict(color="#FF9800", width=1.8),
+                        hovertemplate="날짜: %{x|%Y-%m-%d}<br>MA20: %{y:,.2f}<extra></extra>",
+                    ),
+                    **kwargs,
+                )
+            if show_ma60 and has_ma60:
+                fig.add_trace(
+                    go.Scatter(
+                        x=chart_df["Date"],
+                        y=chart_df["MA60"],
+                        mode="lines",
+                        name="MA60",
+                        line=dict(color="#43A047", width=1.8),
+                        hovertemplate="날짜: %{x|%Y-%m-%d}<br>MA60: %{y:,.2f}<extra></extra>",
+                    ),
+                    **kwargs,
+                )
+
+        tab_line, tab_candle = st.tabs(["선 차트", "캔들스틱 차트"])
+
+        with tab_line:
+            fig_line = go.Figure(
+                data=[
+                    go.Scatter(
+                        x=chart_df["Date"],
+                        y=chart_df["Close"],
+                        mode="lines",
+                        name="종가",
+                        line=dict(color="#1f77b4", width=2),
+                        hovertemplate="날짜: %{x|%Y-%m-%d}<br>가격: %{y:,.2f}<extra></extra>",
+                    )
+                ]
+            )
+            add_ma_traces(fig_line)
+            fig_line.update_layout(
+                title=f"{company_name} 주가 추이",
+                **chart_layout,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+            )
+            st.plotly_chart(fig_line, use_container_width=True)
+
+        with tab_candle:
+            fig_candle = make_subplots(
+                rows=2,
+                cols=1,
+                shared_xaxes=True,
+                vertical_spacing=0.04,
+                row_heights=[0.72, 0.28],
+                subplot_titles=(f"{company_name} 캔들스틱 차트", "거래량"),
+            )
+
+            fig_candle.add_trace(
+                go.Candlestick(
+                    x=chart_df["Date"],
+                    open=chart_df["Open"],
+                    high=chart_df["High"],
+                    low=chart_df["Low"],
+                    close=chart_df["Close"],
+                    name="OHLC",
+                    increasing_line_color="#2962FF",
+                    increasing_fillcolor="#2962FF",
+                    decreasing_line_color="#EF5350",
+                    decreasing_fillcolor="#EF5350",
+                ),
+                row=1,
+                col=1,
+            )
+            add_ma_traces(fig_candle, row=1, col=1)
+
+            vol_avg = float(chart_df["Volume"].mean()) if len(chart_df) else 0.0
+            is_up = chart_df["Close"] >= chart_df["Open"]
+            is_high_vol = chart_df["Volume"] >= vol_avg
+            vol_colors = []
+            for up, high in zip(is_up, is_high_vol):
+                if up and high:
+                    vol_colors.append("rgba(41, 98, 255, 0.95)")
+                elif up:
+                    vol_colors.append("rgba(41, 98, 255, 0.45)")
+                elif high:
+                    vol_colors.append("rgba(239, 83, 80, 0.95)")
+                else:
+                    vol_colors.append("rgba(239, 83, 80, 0.45)")
+
+            fig_candle.add_trace(
+                go.Bar(
+                    x=chart_df["Date"],
+                    y=chart_df["Volume"],
+                    name="거래량",
+                    marker_color=vol_colors,
+                    hovertemplate="날짜: %{x|%Y-%m-%d}<br>거래량: %{y:,.0f}<extra></extra>",
+                ),
+                row=2,
+                col=1,
+            )
+
+            if vol_avg > 0:
+                fig_candle.add_hline(
+                    y=vol_avg,
+                    line_dash="dot",
+                    line_color="rgba(120,120,120,0.7)",
+                    annotation_text="평균 거래량",
+                    annotation_position="top left",
+                    row=2,
+                    col=1,
+                )
+
+            fig_candle.update_layout(
+                height=620,
+                margin=dict(l=40, r=20, t=60, b=40),
+                hovermode="x unified",
+                showlegend=True,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+                xaxis_rangeslider_visible=False,
+            )
+            fig_candle.update_xaxes(title_text="날짜", row=2, col=1, showgrid=True)
+            fig_candle.update_yaxes(
+                title_text="가격",
+                tickformat=y_tickformat,
+                showgrid=True,
+                row=1,
+                col=1,
+            )
+            fig_candle.update_yaxes(title_text="거래량", showgrid=True, row=2, col=1)
+            st.plotly_chart(fig_candle, use_container_width=True)
+
+        st.subheader("역사적 데이터")
+        history_view = history.sort_index(ascending=False)
+        history_kr = history_view.reset_index().rename(
+            columns={
+                "Date": "날짜",
+                "Open": "시가",
+                "High": "고가",
+                "Low": "저가",
+                "Close": "종가",
+                "Volume": "거래량",
+                "Dividends": "배당",
+                "Stock Splits": "주식분할",
             }
         )
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-else:
-    st.caption("비교할 다른 종목을 설정에 입력하면 정규화 차트가 표시됩니다.")
 
-if failed:
-    st.caption(f"불러오지 못한 종목: {', '.join(failed)}")
+        price_cols = ["시가", "고가", "저가", "종가"]
+        for col in price_cols:
+            if col in history_kr.columns:
+                if currency == "KRW":
+                    history_kr[col] = history_kr[col].round(0).map(lambda x: f"{x:,.0f}")
+                else:
+                    history_kr[col] = history_kr[col].map(lambda x: f"{x:,.2f}")
+        if "거래량" in history_kr.columns:
+            history_kr["거래량"] = history_kr["거래량"].round(0).map(lambda x: f"{x:,.0f}")
 
-st.divider()
-st.caption(
-    "데이터 출처: 야후 파이낸스(yfinance) · 투자 권유가 아니며, 참고용 분석 도구입니다."
-)
+        st.dataframe(history_kr, use_container_width=True)
+
+# ============================================================
+# 탭2: 종목 비교 (시작일=100 정규화 수익률)
+# ============================================================
+with main_compare:
+    compare_input = st.text_input(
+        "비교 종목 코드 (쉼표로 구분)",
+        value="005930.KS, 000660.KS",
+        help="예: 005930.KS, 000660.KS, AAPL",
+        key="compare_tickers",
+    )
+    st.caption("시작일 종가=100으로 정규화해 상대 수익률을 비교합니다.")
+
+    if st.button("비교 조회", type="primary", key="btn_compare"):
+        tickers = parse_tickers(compare_input)
+        if len(tickers) < 2:
+            st.error("비교하려면 종목 코드를 2개 이상 입력해 주세요.")
+            st.stop()
+
+        series_list = []
+        errors = []
+        with st.spinner("여러 종목 데이터를 불러오는 중..."):
+            for ticker in tickers:
+                try:
+                    stock = yf.Ticker(ticker)
+                    hist = stock.history(period=period)
+                    if hist.empty or "Close" not in hist.columns:
+                        errors.append(f"{ticker}: 데이터가 비어 있습니다.")
+                        continue
+                    # 타임존 제거 후 날짜만 맞춰 비교
+                    closes = hist["Close"].copy()
+                    closes.index = closes.index.tz_localize(None) if closes.index.tz else closes.index
+                    closes = closes.sort_index()
+                    base = float(closes.iloc[0])
+                    if base == 0:
+                        errors.append(f"{ticker}: 시작 종가가 0입니다.")
+                        continue
+                    normalized = (closes / base) * 100.0
+                    name = korean_company_name(ticker, None)
+                    # 카탈로그에 없으면 yfinance에서 한 번 더 시도
+                    if name == ticker:
+                        try:
+                            name = korean_company_name(ticker, stock.info)
+                        except Exception:
+                            name = ticker
+                    series_list.append(
+                        {
+                            "ticker": ticker,
+                            "name": name,
+                            "normalized": normalized,
+                            "return_pct": float(normalized.iloc[-1] - 100.0),
+                        }
+                    )
+                except Exception as e:
+                    errors.append(f"{ticker}: {e}")
+
+        if not series_list:
+            st.error("비교할 수 있는 종목 데이터가 없습니다.")
+            for msg in errors:
+                st.warning(msg)
+            st.stop()
+
+        st.session_state["compare_result"] = {
+            "series_list": series_list,
+            "errors": errors,
+            "period_label": period_label,
+        }
+
+    if "compare_result" in st.session_state:
+        cmp = st.session_state["compare_result"]
+        series_list = cmp["series_list"]
+        errors = cmp["errors"]
+        saved_period = cmp["period_label"]
+
+        st.success("종목 비교 조회가 완료되었습니다.")
+        if errors:
+            for msg in errors:
+                st.warning(msg)
+
+        # 정규화 비교 차트
+        fig_cmp = go.Figure()
+        for i, item in enumerate(series_list):
+            color = COMPARE_COLORS[i % len(COMPARE_COLORS)]
+            s = item["normalized"]
+            fig_cmp.add_trace(
+                go.Scatter(
+                    x=s.index,
+                    y=s.values,
+                    mode="lines",
+                    name=item["name"],
+                    line=dict(color=color, width=2),
+                    hovertemplate=(
+                        f"{item['name']}<br>"
+                        "날짜: %{x|%Y-%m-%d}<br>"
+                        "지수: %{y:.2f}<extra></extra>"
+                    ),
+                )
+            )
+
+        # 기준선 100
+        fig_cmp.add_hline(
+            y=100,
+            line_dash="dot",
+            line_color="rgba(120,120,120,0.7)",
+            annotation_text="시작=100",
+            annotation_position="top left",
+        )
+
+        fig_cmp.update_layout(
+            title=f"종목 비교 (시작일=100, {saved_period})",
+            xaxis_title="날짜",
+            yaxis_title="정규화 지수 (시작=100)",
+            height=520,
+            margin=dict(l=40, r=20, t=60, b=40),
+            hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+            xaxis=dict(showgrid=True),
+            yaxis=dict(showgrid=True),
+        )
+        st.plotly_chart(fig_cmp, use_container_width=True)
+
+        # 기간 수익률 요약 표
+        summary_rows = [
+            {
+                "종목명": item["name"],
+                "종목코드": item["ticker"],
+                "기간 수익률(%)": f"{item['return_pct']:+.2f}",
+            }
+            for item in series_list
+        ]
+        st.subheader("기간 수익률 요약")
+        st.dataframe(summary_rows, use_container_width=True, hide_index=True)

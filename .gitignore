@@ -6,19 +6,30 @@ env/
 # Python
 __pycache__/
 *.py[cod]
+*$py.class
 *.egg-info/
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
+dist/
+build/
 
 # 환경변수 / 비밀
 .env
 .env.*
+!.env.example
 
 # IDE / OS
 .idea/
 .vscode/
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # Streamlit
 .streamlit/secrets.toml
+
+# 로그 / 임시
+*.log
+*.tmp
+.cache/
